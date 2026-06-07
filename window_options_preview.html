@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Window Config Options</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #0e1117;
+  color: #fafafa;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  padding: 32px;
+}
+h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 6px; }
+.subtitle { font-size: 0.85rem; color: #888; margin-bottom: 36px; }
+
+.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; align-items: start; }
+
+.panel-title {
+  font-size: 1.05rem; font-weight: 700; margin-bottom: 4px;
+  padding-bottom: 8px; border-bottom: 1px solid #2a2a2a;
+}
+.panel-sub { font-size: 0.78rem; color: #888; margin-bottom: 20px; }
+
+/* ── Sidebar shell ── */
+.sidebar {
+  background: #161b27;
+  border-radius: 10px;
+  padding: 20px 18px;
+  min-width: 240px;
+}
+.sidebar-title { font-size: 1.1rem; font-weight: 700; margin-bottom: 2px; }
+.sidebar-cap   { font-size: 0.72rem; color: #888; margin-bottom: 14px; }
+
+/* nav pills */
+.nav-item {
+  padding: 5px 10px; border-radius: 5px; font-size: 0.82rem;
+  margin-bottom: 3px; cursor: default; color: rgba(250,250,250,0.7);
+  display: flex; align-items: center; gap: 8px;
+}
+.nav-item.active { background: rgba(255,255,255,0.10); color: #fff; font-weight: 600; }
+.nav-dot { width: 7px; height: 7px; border-radius: 50%; background: #555; flex-shrink: 0; }
+.nav-dot.active { background: #4c8bf5; }
+
+.divider { border: none; border-top: 1px solid #2a2a2a; margin: 14px 0; }
+.section-label { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.08em;
+                 text-transform: uppercase; color: #888; margin-bottom: 10px; }
+
+/* form controls */
+.field { margin-bottom: 14px; }
+.field label { font-size: 0.78rem; color: rgba(250,250,250,0.75); display: block; margin-bottom: 5px; }
+
+.select-box {
+  width: 100%; background: #262730; border: 1px solid #3a3a4a;
+  border-radius: 6px; padding: 7px 10px; font-size: 0.82rem; color: #fafafa;
+  appearance: none; cursor: pointer; position: relative;
+}
+.select-wrap { position: relative; }
+.select-wrap::after {
+  content: "▾"; position: absolute; right: 10px; top: 50%;
+  transform: translateY(-50%); color: #888; pointer-events: none;
+}
+
+.preset-card {
+  background: rgba(76,139,245,0.10); border: 1px solid rgba(76,139,245,0.35);
+  border-radius: 7px; padding: 10px 12px; margin-top: 4px;
+}
+.preset-row { display: flex; justify-content: space-between; font-size: 0.78rem; margin-bottom: 4px; }
+.preset-row:last-child { margin-bottom: 0; }
+.preset-key   { color: rgba(250,250,250,0.55); }
+.preset-val   { font-weight: 600; color: #fafafa; }
+.preset-desc  { font-size: 0.72rem; color: #888; margin-top: 6px; padding-top: 6px;
+                border-top: 1px solid rgba(255,255,255,0.08); line-height: 1.5; }
+
+/* slider */
+.slider-wrap { margin-bottom: 14px; }
+.slider-wrap label {
+  display: flex; justify-content: space-between;
+  font-size: 0.78rem; color: rgba(250,250,250,0.75); margin-bottom: 5px;
+}
+.slider-wrap label span { color: #4c8bf5; font-weight: 600; }
+.slider {
+  -webkit-appearance: none; width: 100%; height: 5px;
+  border-radius: 3px; background: #3a3a4a; outline: none; cursor: pointer;
+}
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 14px; height: 14px;
+  border-radius: 50%; background: #4c8bf5; cursor: pointer;
+}
+.slider-range { display: flex; justify-content: space-between;
+                font-size: 0.68rem; color: #555; margin-top: 3px; }
+
+/* domain slider group */
+.domain-group { margin-bottom: 14px; }
+.domain-header {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 0.78rem; font-weight: 600; margin-bottom: 8px;
+}
+.domain-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.domain-dot.broking { background: #4c8bf5; }
+.domain-dot.wealth  { background: #2ca02c; }
+.domain-dot.clients { background: #ff7f0e; }
+.domain-sliders { padding-left: 16px; border-left: 2px solid rgba(255,255,255,0.06); }
+
+/* expander */
+.expander {
+  border: 1px solid #2a2a2a; border-radius: 6px;
+  overflow: hidden; margin-top: 4px;
+}
+.expander-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 8px 12px; font-size: 0.80rem; color: rgba(250,250,250,0.75);
+  cursor: default; background: #1e2130;
+}
+.expander-body { padding: 12px 12px 4px; }
+
+/* regime indicator */
+.regime-bar {
+  border-radius: 6px; padding: 10px 12px; margin-bottom: 14px;
+}
+.regime-normal   { background: rgba(44,160,44,0.12);  border: 1px solid rgba(44,160,44,0.35); }
+.regime-elevated { background: rgba(255,127,14,0.12); border: 1px solid rgba(255,127,14,0.35); }
+.regime-high     { background: rgba(214,39,40,0.12);  border: 1px solid rgba(214,39,40,0.35); }
+.regime-label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.08em; opacity: 0.65; margin-bottom: 3px; }
+.regime-value { font-size: 0.88rem; font-weight: 700; }
+.regime-detail { font-size: 0.70rem; opacity: 0.60; margin-top: 4px; line-height: 1.5; }
+
+.volatility-track {
+  display: flex; gap: 3px; margin: 10px 0 6px;
+}
+.vol-bar { flex: 1; height: 10px; border-radius: 2px; background: #2a2a2a; }
+.vol-bar.filled-low      { background: #2ca02c; }
+.vol-bar.filled-mid      { background: #ff7f0e; }
+.vol-bar.filled-high     { background: #d62728; }
+
+.adjusted-tag {
+  display: inline-block; font-size: 0.68rem; padding: 1px 7px;
+  border-radius: 10px; background: rgba(255,127,14,0.20);
+  color: #ff7f0e; font-weight: 600; margin-left: 6px; vertical-align: middle;
+}
+
+.info-pill {
+  font-size: 0.72rem; color: #888; background: rgba(255,255,255,0.05);
+  border-radius: 5px; padding: 6px 10px; margin-top: 6px; line-height: 1.5;
+}
+
+.divider { border: none; border-top: 1px solid #2a2a2a; margin: 14px 0; }
+hr.section { border: none; border-top: 1px solid #1e2130; margin: 28px 0 0; }
+</style>
+</head>
+<body>
+
+<h1>Detection Window — Configuration Options</h1>
+<p class="subtitle">Three sidebar layouts. Same data, different ways for the user to control analysis &amp; baseline windows.</p>
+
+<div class="grid">
+
+  <!-- ══════════════════════════════════════
+       OPTION A — Named presets
+  ══════════════════════════════════════ -->
+  <div>
+    <div class="panel-title">Option A — Named presets</div>
+    <p class="panel-sub">Pick a reporting context. Windows are bundled and documented — no number-guessing.</p>
+
+    <div class="sidebar">
+      <div class="sidebar-title">KPI Monitor</div>
+      <div class="sidebar-cap">Broking &amp; Wealth · Data through 2026-06-07</div>
+
+      <div class="nav-item active"><span class="nav-dot active"></span>KPI Scorecard</div>
+      <div class="nav-item"><span class="nav-dot"></span>Anomaly Alerts</div>
+      <div class="nav-item"><span class="nav-dot"></span>Investigate Anomaly</div>
+      <div class="nav-item"><span class="nav-dot"></span>Trend Explorer</div>
+
+      <div class="divider"></div>
+      <div class="section-label">Detection settings</div>
+
+      <div class="field">
+        <label>Reporting context</label>
+        <div class="select-wrap">
+          <select class="select-box">
+            <option>Daily Pulse</option>
+            <option selected>Weekly Review</option>
+            <option>Monthly Report</option>
+            <option>Post-Event</option>
+            <option>Campaign Launch</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="preset-card">
+        <div class="preset-row">
+          <span class="preset-key">Analysis window</span>
+          <span class="preset-val">14 days</span>
+        </div>
+        <div class="preset-row">
+          <span class="preset-key">Baseline window</span>
+          <span class="preset-val">90 days</span>
+        </div>
+        <div class="preset-desc">
+          Standard 2-week window vs rolling quarter.<br>
+          Best for regular weekly ops reviews.
+        </div>
+      </div>
+
+      <div class="expander" style="margin-top:14px">
+        <div class="expander-header">
+          <span>⚙ Override windows manually</span>
+          <span>›</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════
+       OPTION B — Domain-aware sliders
+  ══════════════════════════════════════ -->
+  <div>
+    <div class="panel-title">Option B — Domain-aware windows</div>
+    <p class="panel-sub">Separate analysis + baseline per domain. Stock KPIs (AUM) get longer windows; volatile flows get shorter ones.</p>
+
+    <div class="sidebar">
+      <div class="sidebar-title">KPI Monitor</div>
+      <div class="sidebar-cap">Broking &amp; Wealth · Data through 2026-06-07</div>
+
+      <div class="nav-item active"><span class="nav-dot active"></span>KPI Scorecard</div>
+      <div class="nav-item"><span class="nav-dot"></span>Anomaly Alerts</div>
+      <div class="nav-item"><span class="nav-dot"></span>Investigate Anomaly</div>
+      <div class="nav-item"><span class="nav-dot"></span>Trend Explorer</div>
+
+      <div class="divider"></div>
+      <div class="section-label">Detection windows</div>
+
+      <!-- Broking -->
+      <div class="domain-group">
+        <div class="domain-header">
+          <span class="domain-dot broking"></span>Broking
+        </div>
+        <div class="domain-sliders">
+          <div class="slider-wrap">
+            <label>Analysis <span>7d</span></label>
+            <input type="range" class="slider" min="3" max="30" value="7">
+            <div class="slider-range"><span>3d</span><span>30d</span></div>
+          </div>
+          <div class="slider-wrap">
+            <label>Baseline <span>60d</span></label>
+            <input type="range" class="slider" min="30" max="180" value="60">
+            <div class="slider-range"><span>30d</span><span>180d</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Wealth -->
+      <div class="domain-group">
+        <div class="domain-header">
+          <span class="domain-dot wealth"></span>Wealth
+        </div>
+        <div class="domain-sliders">
+          <div class="slider-wrap">
+            <label>Analysis <span>14d</span></label>
+            <input type="range" class="slider" min="3" max="60" value="14">
+            <div class="slider-range"><span>3d</span><span>60d</span></div>
+          </div>
+          <div class="slider-wrap">
+            <label>Baseline <span>90d</span></label>
+            <input type="range" class="slider" min="30" max="180" value="90">
+            <div class="slider-range"><span>30d</span><span>180d</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Clients -->
+      <div class="domain-group">
+        <div class="domain-header">
+          <span class="domain-dot clients"></span>Clients
+        </div>
+        <div class="domain-sliders">
+          <div class="slider-wrap">
+            <label>Analysis <span>30d</span></label>
+            <input type="range" class="slider" min="7" max="60" value="30">
+            <div class="slider-range"><span>7d</span><span>60d</span></div>
+          </div>
+          <div class="slider-wrap">
+            <label>Baseline <span>180d</span></label>
+            <input type="range" class="slider" min="60" max="365" value="180">
+            <div class="slider-range"><span>60d</span><span>365d</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════
+       OPTION C — Volatility-adaptive
+  ══════════════════════════════════════ -->
+  <div>
+    <div class="panel-title">Option C — Volatility-adaptive</div>
+    <p class="panel-sub">Sliders set your intent. The system auto-adjusts z-score thresholds based on Nifty's current volatility regime.</p>
+
+    <div class="sidebar">
+      <div class="sidebar-title">KPI Monitor</div>
+      <div class="sidebar-cap">Broking &amp; Wealth · Data through 2026-06-07</div>
+
+      <div class="nav-item active"><span class="nav-dot active"></span>KPI Scorecard</div>
+      <div class="nav-item"><span class="nav-dot"></span>Anomaly Alerts</div>
+      <div class="nav-item"><span class="nav-dot"></span>Investigate Anomaly</div>
+      <div class="nav-item"><span class="nav-dot"></span>Trend Explorer</div>
+
+      <div class="divider"></div>
+      <div class="section-label">Market regime</div>
+
+      <div class="regime-bar regime-elevated">
+        <div class="regime-label">Nifty 30d Volatility</div>
+        <div class="regime-value">Elevated &nbsp;<span style="font-size:0.75rem;opacity:0.7">0.94% / day</span></div>
+        <div class="volatility-track">
+          <div class="vol-bar filled-low"></div>
+          <div class="vol-bar filled-low"></div>
+          <div class="vol-bar filled-low"></div>
+          <div class="vol-bar filled-mid"></div>
+          <div class="vol-bar filled-mid"></div>
+          <div class="vol-bar"></div>
+          <div class="vol-bar"></div>
+          <div class="vol-bar"></div>
+        </div>
+        <div class="regime-detail">Z-score thresholds raised +20%.<br>Only meaningful firm-driven anomalies will fire.</div>
+      </div>
+
+      <div class="divider"></div>
+      <div class="section-label">Detection windows</div>
+
+      <div class="slider-wrap">
+        <label>Analysis window <span>14d</span></label>
+        <input type="range" class="slider" min="7" max="30" value="14">
+        <div class="slider-range"><span>7d</span><span>30d</span></div>
+      </div>
+
+      <div class="slider-wrap">
+        <label>Baseline window <span>90d</span></label>
+        <input type="range" class="slider" min="30" max="180" value="90">
+        <div class="slider-range"><span>30d</span><span>180d</span></div>
+      </div>
+
+      <div class="info-pill">
+        Effective thresholds are auto-scaled by regime.<br>
+        Z-score sensitivity: <strong style="color:#ff7f0e">Normal +20%</strong>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<hr class="section">
+<p style="margin-top:18px;font-size:0.80rem;color:#555">
+  Options can be combined — e.g. A (preset picker) + C (volatility auto-scaling). Tell me which direction to build and I'll implement it.
+</p>
+
+</body>
+</html>

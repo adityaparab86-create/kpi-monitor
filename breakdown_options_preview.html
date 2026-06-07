@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Breakdown Options</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #0e1117; color: #fafafa;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  padding: 28px 32px;
+}
+h1 { font-size: 1.4rem; font-weight: 700; margin-bottom: 4px; }
+.page-sub { font-size: 0.82rem; color: #666; margin-bottom: 32px; }
+
+/* ── section headers ── */
+.opt-header { font-size: 1.05rem; font-weight: 700; margin: 0 0 3px; }
+.opt-sub    { font-size: 0.78rem; color: #777; margin-bottom: 14px; }
+.opt-wrap   { margin-bottom: 44px; }
+hr.sect     { border: none; border-top: 1px solid #1e2130; margin: 36px 0; }
+
+/* ── shared card shell ── */
+.kpi-card {
+  border-radius: 8px; padding: 13px 15px;
+  border-left: 5px solid #ccc;
+  display: flex; flex-direction: column;
+}
+.card-warning  { border-color: #ff7f0e; background: rgba(255,127,14,0.10); }
+.card-ok       { border-color: #2ca02c; background: rgba(44,160,44,0.10); }
+.card-critical { border-color: #d62728; background: rgba(214,39,40,0.10); }
+.kpi-label { font-size: 0.72rem; opacity: 0.6; margin-bottom: 3px; }
+.kpi-value { font-size: 1.25rem; font-weight: 700; }
+.kpi-value sub { font-size: 0.58rem; font-weight:400; opacity:0.5; vertical-align:baseline; }
+.compare-row { display:flex; gap:10px; margin-top:5px; }
+.cmp { flex:1; }
+.cmp + .cmp { border-left:1px solid rgba(128,128,128,0.25); padding-left:10px; }
+.cmp-lbl { font-size:0.64rem; opacity:0.5; margin-bottom:1px; }
+.cmp-val { font-size:0.80rem; font-weight:600; }
+.kpi-footer { margin-top:auto; padding-top:7px; }
+.badge { display:inline-block; padding:2px 9px; border-radius:11px;
+         font-size:0.70rem; font-weight:700; color:#fff; }
+.badge-Warning  { background:#ff7f0e; }
+.badge-Critical { background:#d62728; }
+.badge-OK       { background:#2ca02c; }
+
+/* ── contribution bar ── */
+.contrib-bar-bg { background:rgba(128,128,128,0.18); border-radius:3px;
+                  height:6px; flex:1; overflow:hidden; }
+.contrib-bar-fill { height:6px; border-radius:3px; }
+
+/* ── ─── OPTION A: inline mini bars on card ─── ── */
+.mini-breakdown { margin-top:8px; padding-top:8px;
+                  border-top:1px solid rgba(255,255,255,0.07); }
+.mb-title { font-size:0.62rem; text-transform:uppercase; letter-spacing:0.07em;
+            opacity:0.45; margin-bottom:5px; }
+.mb-row   { display:flex; align-items:center; gap:7px; margin-bottom:4px; font-size:0.72rem; }
+.mb-dim   { width:46px; opacity:0.75; flex-shrink:0; overflow:hidden;
+            text-overflow:ellipsis; white-space:nowrap; }
+.mb-pct   { width:38px; font-weight:600; flex-shrink:0; text-align:right; }
+.mb-contrib { width:32px; font-size:0.65rem; opacity:0.5; flex-shrink:0; text-align:right; }
+
+/* ── OPTION B: expandable breakdown panel under domain section ── */
+.domain-label { font-size:0.80rem; font-weight:700; margin:18px 0 10px;
+                display:flex; align-items:center; gap:8px; }
+.domain-dot   { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+.cards-grid   { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:10px; }
+
+.breakdown-panel {
+  background:#13151f; border:1px solid #242736;
+  border-radius:8px; padding:14px 16px; margin-top:4px;
+}
+.bp-title { font-size:0.72rem; font-weight:700; text-transform:uppercase;
+            letter-spacing:0.07em; opacity:0.5; margin-bottom:10px; }
+.bp-kpi-row { display:flex; gap:18px; }
+.bp-kpi-block { flex:1; min-width:0; }
+.bp-kpi-name { font-size:0.72rem; font-weight:600; margin-bottom:6px; opacity:0.9; }
+
+.level-label { font-size:0.62rem; opacity:0.4; text-transform:uppercase;
+               letter-spacing:0.06em; margin: 4px 0 3px; }
+.contrib-row { display:flex; align-items:center; gap:7px; margin-bottom:3px; }
+.cr-dim  { font-size:0.73rem; width:52px; flex-shrink:0; opacity:0.8; }
+.cr-dev  { font-size:0.73rem; font-weight:600; width:38px; flex-shrink:0; text-align:right; }
+.cr-bar-wrap { flex:1; display:flex; align-items:center; gap:5px; }
+.cr-pct  { font-size:0.65rem; opacity:0.5; width:26px; flex-shrink:0; text-align:right; }
+.sub-rows { padding-left:12px; border-left:2px solid rgba(255,255,255,0.05); margin-top:2px; }
+
+/* ── OPTION C: split-pane on Anomaly Alerts ── */
+.alerts-row {
+  display:grid; grid-template-columns:1fr 1.6fr;
+  gap:0; border:1px solid #242736; border-radius:8px; overflow:hidden;
+  margin-bottom:10px;
+}
+.alert-meta { padding:12px 14px; border-right:1px solid #242736; }
+.alert-breakdown { padding:12px 14px; background:#111318; }
+.alert-kpi  { font-size:0.88rem; font-weight:700; margin-bottom:2px; }
+.alert-dim  { font-size:0.72rem; opacity:0.55; margin-bottom:6px; }
+.alert-stat { display:flex; gap:14px; }
+.stat-item  { }
+.stat-lbl   { font-size:0.62rem; opacity:0.45; }
+.stat-val   { font-size:0.85rem; font-weight:600; }
+.ab-title   { font-size:0.62rem; text-transform:uppercase; letter-spacing:0.07em;
+              opacity:0.4; margin-bottom:7px; }
+
+/* colors */
+.red    { color:#d62728; }
+.orange { color:#ff7f0e; }
+.green  { color:#2ca02c; }
+</style>
+</head>
+<body>
+
+<h1>Anomaly/Deficit Breakdown — Where &amp; How</h1>
+<p class="page-sub">Three options for surfacing ranked contributor analysis without leaving the main view.</p>
+
+
+<!-- ═══════════════════════════════════════════════════════
+     OPTION A — Mini breakdown inline on each KPI card
+═══════════════════════════════════════════════════════ -->
+<div class="opt-wrap">
+  <div class="opt-header">Option A — Mini breakdown inline on KPI card</div>
+  <p class="opt-sub">Top-3 contributors appear directly on anomalous cards. Clean &amp; immediate — no click required. Non-anomalous cards are unchanged.</p>
+
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;max-width:900px">
+
+    <!-- Brokerage Revenue — Warning with breakdown -->
+    <div class="kpi-card card-warning">
+      <div class="kpi-label">Brokerage Revenue</div>
+      <div class="kpi-value">₹37Cr<sub> /day</sub></div>
+      <div class="compare-row">
+        <div class="cmp">
+          <div class="cmp-lbl">vs Baseline (60d)</div>
+          <div class="cmp-val red">↓ 14.8%</div>
+        </div>
+        <div class="cmp">
+          <div class="cmp-lbl">vs Target (₹39Cr)</div>
+          <div class="cmp-val red">↓ 6%</div>
+        </div>
+      </div>
+
+      <!-- mini breakdown -->
+      <div class="mini-breakdown">
+        <div class="mb-title">Top contributors to deficit</div>
+
+        <div class="mb-row">
+          <div class="mb-dim">South</div>
+          <div class="contrib-bar-bg"><div class="contrib-bar-fill" style="width:72%;background:#d62728"></div></div>
+          <div class="mb-pct red">-49%</div>
+          <div class="mb-contrib">72%</div>
+        </div>
+        <div class="mb-row">
+          <div class="mb-dim">East</div>
+          <div class="contrib-bar-bg"><div class="contrib-bar-fill" style="width:18%;background:#ff7f0e"></div></div>
+          <div class="mb-pct orange">-12%</div>
+          <div class="mb-contrib">18%</div>
+        </div>
+        <div class="mb-row">
+          <div class="mb-dim">West</div>
+          <div class="contrib-bar-bg"><div class="contrib-bar-fill" style="width:8%;background:#ff7f0e"></div></div>
+          <div class="mb-pct orange">-4%</div>
+          <div class="mb-contrib">8%</div>
+        </div>
+      </div>
+
+      <div class="kpi-footer">
+        <span class="badge badge-Warning">Warning</span>
+      </div>
+    </div>
+
+    <!-- Equity Volume — Critical with breakdown -->
+    <div class="kpi-card card-critical">
+      <div class="kpi-label">Equity Cash Volume</div>
+      <div class="kpi-value">₹1,420Cr<sub> /day</sub></div>
+      <div class="compare-row">
+        <div class="cmp">
+          <div class="cmp-lbl">vs Baseline (60d)</div>
+          <div class="cmp-val red">↓ 21.3%</div>
+        </div>
+        <div class="cmp">
+          <div class="cmp-lbl">vs Target (₹1,600Cr)</div>
+          <div class="cmp-val red">↓ 11%</div>
+        </div>
+      </div>
+      <div class="mini-breakdown">
+        <div class="mb-title">Top contributors to deficit</div>
+        <div class="mb-row">
+          <div class="mb-dim">South</div>
+          <div class="contrib-bar-bg"><div class="contrib-bar-fill" style="width:61%;background:#d62728"></div></div>
+          <div class="mb-pct red">-44%</div>
+          <div class="mb-contrib">61%</div>
+        </div>
+        <div class="mb-row">
+          <div class="mb-dim">North</div>
+          <div class="contrib-bar-bg"><div class="contrib-bar-fill" style="width:22%;background:#ff7f0e"></div></div>
+          <div class="mb-pct orange">-18%</div>
+          <div class="mb-contrib">22%</div>
+        </div>
+        <div class="mb-row">
+          <div class="mb-dim">East</div>
+          <div class="contrib-bar-bg"><div class="contrib-bar-fill" style="width:10%;background:#ff7f0e"></div></div>
+          <div class="mb-pct orange">-9%</div>
+          <div class="mb-contrib">10%</div>
+        </div>
+      </div>
+      <div class="kpi-footer">
+        <span class="badge badge-Critical">Critical</span>
+      </div>
+    </div>
+
+    <!-- Derivatives Volume — OK, no breakdown -->
+    <div class="kpi-card card-ok">
+      <div class="kpi-label">Derivatives Volume</div>
+      <div class="kpi-value">₹4,250Cr<sub> /day</sub></div>
+      <div class="compare-row">
+        <div class="cmp">
+          <div class="cmp-lbl">vs Baseline (60d)</div>
+          <div class="cmp-val green">↑ 3.2%</div>
+        </div>
+        <div class="cmp">
+          <div class="cmp-lbl">vs Target (₹4,100Cr)</div>
+          <div class="cmp-val green">↑ 4%</div>
+        </div>
+      </div>
+      <div class="kpi-footer">
+        <span class="badge badge-OK">Healthy</span>
+      </div>
+    </div>
+
+    <!-- Active Clients — OK -->
+    <div class="kpi-card card-ok">
+      <div class="kpi-label">Active Trading Clients</div>
+      <div class="kpi-value">12,840<sub> /day</sub></div>
+      <div class="compare-row">
+        <div class="cmp">
+          <div class="cmp-lbl">vs Baseline (60d)</div>
+          <div class="cmp-val green">↑ 1.1%</div>
+        </div>
+        <div class="cmp">
+          <div class="cmp-lbl">vs Target (12,600)</div>
+          <div class="cmp-val green">↑ 2%</div>
+        </div>
+      </div>
+      <div class="kpi-footer">
+        <span class="badge badge-OK">Healthy</span>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+
+<hr class="sect">
+
+
+<!-- ═══════════════════════════════════════════════════════
+     OPTION B — Expandable breakdown panel below domain cards
+═══════════════════════════════════════════════════════ -->
+<div class="opt-wrap">
+  <div class="opt-header">Option B — Ranked breakdown panel below each domain</div>
+  <p class="opt-sub">Cards stay compact. A collapsible panel below each domain section shows constituents and sub-constituents for every anomalous KPI in that domain, side-by-side.</p>
+
+  <div style="max-width:960px">
+    <!-- cards row -->
+    <div class="domain-label">
+      <span class="domain-dot" style="background:#4c8bf5"></span>Broking KPIs
+    </div>
+    <div class="cards-grid">
+      <div class="kpi-card card-warning" style="padding:10px 12px">
+        <div class="kpi-label">Brokerage Revenue</div>
+        <div class="kpi-value" style="font-size:1.05rem">₹37Cr<sub> /day</sub></div>
+        <div class="kpi-footer"><span class="badge badge-Warning" style="font-size:0.65rem">Warning</span></div>
+      </div>
+      <div class="kpi-card card-critical" style="padding:10px 12px">
+        <div class="kpi-label">Equity Cash Volume</div>
+        <div class="kpi-value" style="font-size:1.05rem">₹1,420Cr<sub> /day</sub></div>
+        <div class="kpi-footer"><span class="badge badge-Critical" style="font-size:0.65rem">Critical</span></div>
+      </div>
+      <div class="kpi-card card-ok" style="padding:10px 12px">
+        <div class="kpi-label">Derivatives Volume</div>
+        <div class="kpi-value" style="font-size:1.05rem">₹4,250Cr<sub> /day</sub></div>
+        <div class="kpi-footer"><span class="badge badge-OK" style="font-size:0.65rem">Healthy</span></div>
+      </div>
+      <div class="kpi-card card-ok" style="padding:10px 12px">
+        <div class="kpi-label">Active Clients</div>
+        <div class="kpi-value" style="font-size:1.05rem">12,840<sub> /day</sub></div>
+        <div class="kpi-footer"><span class="badge badge-OK" style="font-size:0.65rem">Healthy</span></div>
+      </div>
+    </div>
+
+    <!-- breakdown panel -->
+    <div class="breakdown-panel">
+      <div class="bp-title">▾ Anomaly breakdown — 2 KPIs affected</div>
+      <div class="bp-kpi-row">
+
+        <!-- Brokerage Revenue breakdown -->
+        <div class="bp-kpi-block">
+          <div class="bp-kpi-name">Brokerage Revenue &nbsp;<span style="opacity:0.5;font-weight:400;font-size:0.68rem">↓ 14.8% vs baseline</span></div>
+
+          <div class="level-label">By Region</div>
+          <div class="contrib-row">
+            <div class="cr-dim">South</div>
+            <div class="cr-dev red">-49%</div>
+            <div class="cr-bar-wrap">
+              <div class="contrib-bar-bg"><div class="contrib-bar-fill" style="width:72%;background:#d62728"></div></div>
+              <div class="cr-pct">72%</div>
+            </div>
+          </div>
+          <div class="contrib-row">
+            <div class="cr-dim">East</div>
+            <div class="cr-dev orange">-12%</div>
+            <div class="cr-bar-wrap">
+              <div class="contrib-bar-bg"><div class="contrib-bar-fill" style="width:18%;background:#ff7f0e"></div></div>
+              <div class="cr-pct">18%</div>
+            </div>
+          </div>
+          <div class="contrib-row">
+            <div class="cr-dim">West</div>
+            <div class="cr-dev orange">-4%</div>
+            <div class="cr-bar-wrap">
+              <div class="contrib-bar-bg"><div class="contrib-bar-fill" style="width:8%;background:#ff7f0e"></div></div>
+              <div class="cr-pct">8%</div>
+            </div>
+          </div>
+
+          <!-- sub-level: South branches -->
+          <div class="level-label" style="margin-top:8px">South → By Branch</div>
+          <div class="sub-rows">
+            <div class="contrib-row">
+              <div class="cr-dim">Bangalore</div>
+              <div class="cr-dev red">-55%</div>
+              <div class="cr-bar-wrap">
+                <div class="contrib-bar-bg"><div class="contrib-bar-fill" style="width:47%;background:#d62728"></div></div>
+                <div class="cr-pct">47%</div>
+              </div>
+            </div>
+            <div class="contrib-row">
+              <div class="cr-dim">Chennai</div>
+              <div class="cr-dev red">-47%</div>
+              <div class="cr-bar-wrap">
+                <div class="contrib-bar-bg"><div class="contrib-bar-fill" style="width:32%;background:#ff7f0e"></div></div>
+                <div class="cr-pct">32%</div>
+              </div>
+            </div>
+            <div class="contrib-row">
+              <div class="cr-dim">Hyderabad</div>
+              <div class="cr-dev orange">-43%</div>
+              <div class="cr-bar-wrap">
+                <div class="contrib-bar-bg"><div class="contrib-bar-fill" style="width:21%;background:#ff7f0e"></div></div>
+                <div class="cr-pct">21%</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div style="width:1px;background:rgba(255,255,255,0.06);margin:0 14px;flex-shrink:0"></div>
+
+        <!-- Equity Volume breakdown -->
+        <div class="bp-kpi-block">
+          <div class="bp-kpi-name">Equity Cash Volume &nbsp;<span style="opacity:0.5;font-weight:400;font-size:0.68rem">↓ 21.3% vs baseline</span></div>
+
+          <div class="level-label">By Region</div>
+          <div class="contrib-row">
+            <div class="cr-dim">South</div>
+            <div class="cr-dev red">-44%</div>
+            <div class="cr-bar-wrap">
+              <div class="contrib-bar-bg"><div class="contrib-bar-fill" style="width:61%;background:#d62728"></div></div>
+              <div class="cr-pct">61%</div>
+            </div>
+          </div>
+          <div class="contrib-row">
+            <div class="cr-dim">North</div>
+            <div class="cr-dev orange">-18%</div>
+            <div class="cr-bar-wrap">
+              <div class="contrib-bar-bg"><div class="contrib-bar-fill" style="width:22%;background:#ff7f0e"></div></div>
+              <div class="cr-pct">22%</div>
+            </div>
+          </div>
+          <div class="contrib-row">
+            <div class="cr-dim">East</div>
+            <div class="cr-dev orange">-9%</div>
+            <div class="cr-bar-wrap">
+              <div class="contrib-bar-bg"><div class="contrib-bar-fill" style="width:10%;background:#ff7f0e"></div></div>
+              <div class="cr-pct">10%</div>
+            </div>
+          </div>
+
+          <div class="level-label" style="margin-top:8px">South → By Branch</div>
+          <div class="sub-rows">
+            <div class="contrib-row">
+              <div class="cr-dim">Bangalore</div>
+              <div class="cr-dev red">-51%</div>
+              <div class="cr-bar-wrap">
+                <div class="contrib-bar-bg"><div class="contrib-bar-fill" style="width:50%;background:#d62728"></div></div>
+                <div class="cr-pct">50%</div>
+              </div>
+            </div>
+            <div class="contrib-row">
+              <div class="cr-dim">Chennai</div>
+              <div class="cr-dev red">-40%</div>
+              <div class="cr-bar-wrap">
+                <div class="contrib-bar-bg"><div class="contrib-bar-fill" style="width:30%;background:#ff7f0e"></div></div>
+                <div class="cr-pct">30%</div>
+              </div>
+            </div>
+            <div class="contrib-row">
+              <div class="cr-dim">Hyderabad</div>
+              <div class="cr-dev orange">-35%</div>
+              <div class="cr-bar-wrap">
+                <div class="contrib-bar-bg"><div class="contrib-bar-fill" style="width:20%;background:#ff7f0e"></div></div>
+                <div class="cr-pct">20%</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- bp-kpi-row -->
+    </div><!-- breakdown-panel -->
+  </div>
+</div>
+
+
+<hr class="sect">
+
+
+<!-- ═══════════════════════════════════════════════════════
+     OPTION C — Inline in Anomaly Alerts (split-pane row)
+═══════════════════════════════════════════════════════ -->
+<div class="opt-wrap">
+  <div class="opt-header">Option C — Contributor column in Anomaly Alerts</div>
+  <p class="opt-sub">Each alert row splits: left = anomaly metadata, right = ranked breakdown to sub-level. No navigation needed — everything in one row.</p>
+
+  <div style="max-width:900px">
+
+    <!-- Alert row 1 -->
+    <div class="alerts-row">
+      <div class="alert-meta">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <span class="badge badge-Warning">Warning</span>
+          <span style="font-size:0.68rem;opacity:0.45">Z-score · Broking</span>
+        </div>
+        <div class="alert-kpi">Brokerage Revenue</div>
+        <div class="alert-dim">Firm-wide</div>
+        <div class="alert-stat">
+          <div class="stat-item">
+            <div class="stat-lbl">Actual</div>
+            <div class="stat-val">₹37Cr/d</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-lbl">Expected</div>
+            <div class="stat-val">₹43Cr/d</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-lbl">Deviation</div>
+            <div class="stat-val red">-14.8%</div>
+          </div>
+        </div>
+      </div>
+      <div class="alert-breakdown">
+        <div class="ab-title">Ranked contributors</div>
+        <div style="display:flex;gap:18px">
+          <div style="flex:1">
+            <div class="level-label">Region</div>
+            <div class="contrib-row">
+              <div class="cr-dim">South</div>
+              <div class="cr-dev red">-49%</div>
+              <div class="cr-bar-wrap"><div class="contrib-bar-bg"><div class="contrib-bar-fill" style="width:72%;background:#d62728"></div></div><div class="cr-pct">72%</div></div>
+            </div>
+            <div class="contrib-row">
+              <div class="cr-dim">East</div>
+              <div class="cr-dev orange">-12%</div>
+              <div class="cr-bar-wrap"><div class="contrib-bar-bg"><div class="contrib-bar-fill" style="width:18%;background:#ff7f0e"></div></div><div class="cr-pct">18%</div></div>
+            </div>
+            <div class="contrib-row">
+              <div class="cr-dim">West</div>
+              <div class="cr-dev orange">-4%</div>
+              <div class="cr-bar-wrap"><div class="contrib-bar-bg"><div class="contrib-bar-fill" style="width:8%;background:#ff7f0e"></div></div><div class="cr-pct">8%</div></div>
+            </div>
+          </div>
+          <div style="flex:1;border-left:1px solid rgba(255,255,255,0.06);padding-left:16px">
+            <div class="level-label">South → Branch</div>
+            <div class="contrib-row">
+              <div class="cr-dim">Bangalore</div>
+              <div class="cr-dev red">-55%</div>
+              <div class="cr-bar-wrap"><div class="contrib-bar-bg"><div class="contrib-bar-fill" style="width:47%;background:#d62728"></div></div><div class="cr-pct">47%</div></div>
+            </div>
+            <div class="contrib-row">
+              <div class="cr-dim">Chennai</div>
+              <div class="cr-dev red">-47%</div>
+              <div class="cr-bar-wrap"><div class="contrib-bar-bg"><div class="contrib-bar-fill" style="width:32%;background:#ff7f0e"></div></div><div class="cr-pct">32%</div></div>
+            </div>
+            <div class="contrib-row">
+              <div class="cr-dim">Hyderabad</div>
+              <div class="cr-dev orange">-43%</div>
+              <div class="cr-bar-wrap"><div class="contrib-bar-bg"><div class="contrib-bar-fill" style="width:21%;background:#ff7f0e"></div></div><div class="cr-pct">21%</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Alert row 2 -->
+    <div class="alerts-row">
+      <div class="alert-meta">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <span class="badge badge-Critical">Critical</span>
+          <span style="font-size:0.68rem;opacity:0.45">Z-score · Wealth</span>
+        </div>
+        <div class="alert-kpi">Redemptions</div>
+        <div class="alert-dim">East · Kolkata</div>
+        <div class="alert-stat">
+          <div class="stat-item">
+            <div class="stat-lbl">Actual</div>
+            <div class="stat-val">₹4.2Cr/d</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-lbl">Expected</div>
+            <div class="stat-val">₹1.8Cr/d</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-lbl">Deviation</div>
+            <div class="stat-val red">+138%</div>
+          </div>
+        </div>
+      </div>
+      <div class="alert-breakdown">
+        <div class="ab-title">Ranked contributors</div>
+        <div style="display:flex;gap:18px">
+          <div style="flex:1">
+            <div class="level-label">Kolkata → Segment</div>
+            <div class="contrib-row">
+              <div class="cr-dim">Ultra HNI</div>
+              <div class="cr-dev red">+158%</div>
+              <div class="cr-bar-wrap"><div class="contrib-bar-bg"><div class="contrib-bar-fill" style="width:55%;background:#d62728"></div></div><div class="cr-pct">55%</div></div>
+            </div>
+            <div class="contrib-row">
+              <div class="cr-dim">HNI</div>
+              <div class="cr-dev red">+141%</div>
+              <div class="cr-bar-wrap"><div class="contrib-bar-bg"><div class="contrib-bar-fill" style="width:31%;background:#d62728"></div></div><div class="cr-pct">31%</div></div>
+            </div>
+            <div class="contrib-row">
+              <div class="cr-dim">Retail</div>
+              <div class="cr-dev orange">+112%</div>
+              <div class="cr-bar-wrap"><div class="contrib-bar-bg"><div class="contrib-bar-fill" style="width:14%;background:#ff7f0e"></div></div><div class="cr-pct">14%</div></div>
+            </div>
+          </div>
+          <div style="flex:1;border-left:1px solid rgba(255,255,255,0.06);padding-left:16px">
+            <div class="level-label">Kolkata Ultra HNI → RM</div>
+            <div class="contrib-row">
+              <div class="cr-dim">KOL_RM02</div>
+              <div class="cr-dev red">+183%</div>
+              <div class="cr-bar-wrap"><div class="contrib-bar-bg"><div class="contrib-bar-fill" style="width:60%;background:#d62728"></div></div><div class="cr-pct">60%</div></div>
+            </div>
+            <div class="contrib-row">
+              <div class="cr-dim">KOL_RM04</div>
+              <div class="cr-dev red">+145%</div>
+              <div class="cr-bar-wrap"><div class="contrib-bar-bg"><div class="contrib-bar-fill" style="width:28%;background:#d62728"></div></div><div class="cr-pct">28%</div></div>
+            </div>
+            <div class="contrib-row">
+              <div class="cr-dim">KOL_RM01</div>
+              <div class="cr-dev orange">+97%</div>
+              <div class="cr-bar-wrap"><div class="contrib-bar-bg"><div class="contrib-bar-fill" style="width:12%;background:#ff7f0e"></div></div><div class="cr-pct">12%</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<hr class="sect">
+<p style="font-size:0.78rem;color:#555;margin-top:16px">
+  <strong style="color:#888">A</strong> — least intrusive, best for quick daily scan &nbsp;·&nbsp;
+  <strong style="color:#888">B</strong> — richest detail, good for investigation mode &nbsp;·&nbsp;
+  <strong style="color:#888">C</strong> — best for alert triage, all context in one row<br>
+  Options can be combined: A on scorecard + C on alerts page.
+</p>
+
+</body>
+</html>

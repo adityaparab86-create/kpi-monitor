@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>KPI Card — Target Achievement Options</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #0e1117;
+    color: #fafafa;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    padding: 32px;
+  }
+
+  h1 { font-size: 1.6rem; font-weight: 700; margin-bottom: 4px; }
+  .subtitle { font-size: 0.85rem; color: #888; margin-bottom: 32px; }
+
+  .section-header {
+    font-size: 1.1rem; font-weight: 600; margin: 32px 0 4px;
+    padding-bottom: 4px; border-bottom: 1px solid #333;
+  }
+  .section-sub { font-size: 0.80rem; color: #888; margin-bottom: 16px; }
+
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+
+  /* ── Card base ── */
+  .card {
+    border-radius: 8px;
+    padding: 14px 16px;
+    border-left: 5px solid #ccc;
+  }
+  .card-warning  { border-color: #ff7f0e; background: rgba(255,127,14,0.12); }
+  .card-ok       { border-color: #2ca02c; background: rgba(44,160,44,0.12); }
+  .card-aum      { border-color: #2ca02c; background: rgba(44,160,44,0.12); }
+  .card-sip      { border-color: #2ca02c; background: rgba(44,160,44,0.12); }
+
+  .kpi-label { font-size: 0.75rem; color: rgba(250,250,250,0.6); margin-bottom: 4px; }
+  .kpi-value { font-size: 1.35rem; font-weight: 700; }
+  .kpi-value sub { font-size: 0.62rem; font-weight: 400; color: rgba(250,250,250,0.5); vertical-align: baseline; }
+  .kpi-prior { font-size: 0.75rem; color: rgba(250,250,250,0.55); margin-top: 3px; }
+  .kpi-note  { font-size: 0.70rem; color: rgba(250,250,250,0.50); margin-top: 4px; }
+
+  .delta-up   { color: #2ca02c; font-size: 0.82rem; margin-top: 2px; }
+  .delta-down { color: #d62728; font-size: 0.82rem; margin-top: 2px; }
+
+  /* badges */
+  .badge {
+    display: inline-block; padding: 2px 10px; border-radius: 12px;
+    font-size: 0.72rem; font-weight: 700; color: #fff;
+  }
+  .badge-Warning  { background: #ff7f0e; }
+  .badge-OK       { background: #2ca02c; }
+  .badge-tgt-ok   { background: #2ca02c; }
+  .badge-tgt-mid  { background: #ff7f0e; }
+  .badge-tgt-low  { background: #d62728; }
+
+  /* Progress bar (Option A) */
+  .prog-label { font-size: 0.72rem; color: rgba(250,250,250,0.55); margin-top: 8px; }
+  .prog-wrap  { background: rgba(128,128,128,0.2); border-radius: 4px; height: 8px; margin-top: 4px; overflow: hidden; }
+  .prog-fill  { height: 8px; border-radius: 4px; }
+  .prog-text  { font-size: 0.76rem; font-weight: 600; margin-top: 3px; }
+
+  /* Two-row comparison (Option B) */
+  .compare-row { display: flex; gap: 14px; margin-top: 8px; }
+  .compare-cell { flex: 1; }
+  .compare-cell + .compare-cell {
+    border-left: 1px solid rgba(128,128,128,0.3);
+    padding-left: 14px;
+  }
+  .compare-label { font-size: 0.66rem; color: rgba(250,250,250,0.50); margin-bottom: 2px; }
+  .compare-val   { font-size: 0.88rem; font-weight: 600; }
+
+  .divider { border: none; border-top: 1px solid #2a2a2a; margin: 28px 0 0; }
+</style>
+</head>
+<body>
+
+<h1>KPI Card — Target Achievement Options</h1>
+<p class="subtitle">Three cards per row = three KPIs (Brokerage Revenue · Total AUM · SIP Inflows). Each row shows a different layout option.</p>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     OPTION A — Progress bar
+═══════════════════════════════════════════════════════════════ -->
+<div class="section-header">Option A — Progress bar</div>
+<p class="section-sub">Fill bar under the number instantly communicates how much of the target is eaten up. Both baseline delta and target progress visible at a glance.</p>
+
+<div class="grid">
+
+  <!-- Brokerage Revenue — Warning, 106% of target -->
+  <div class="card card-warning">
+    <div class="kpi-label">Brokerage Revenue</div>
+    <div class="kpi-value">₹37Cr<sub>&nbsp;/day avg</sub></div>
+    <div class="kpi-prior">Baseline 90d avg: ₹37Cr</div>
+    <div class="delta-down">↓ 0.8% vs baseline</div>
+    <div class="prog-label">Monthly target: ₹1,050Cr</div>
+    <div class="prog-wrap"><div class="prog-fill" style="width:100%;background:#2ca02c"></div></div>
+    <div class="prog-text" style="color:#2ca02c">106% of target achieved</div>
+    <div style="margin-top:8px"><span class="badge badge-Warning">Warning</span></div>
+    <div class="kpi-note">Anomaly at South › HNI: -49.2% vs baseline</div>
+  </div>
+
+  <!-- AUM — OK, 88% of target -->
+  <div class="card card-ok">
+    <div class="kpi-label">Total AUM</div>
+    <div class="kpi-value">₹19,376Cr<sub>&nbsp;avg</sub></div>
+    <div class="kpi-prior">Baseline 90d avg: ₹19,352Cr</div>
+    <div class="delta-up">↑ 0.1% vs baseline</div>
+    <div class="prog-label">Annual target: ₹22,000Cr</div>
+    <div class="prog-wrap"><div class="prog-fill" style="width:88%;background:#ff7f0e"></div></div>
+    <div class="prog-text" style="color:#ff7f0e">88% of target achieved</div>
+    <div style="margin-top:8px"><span class="badge badge-OK">OK</span></div>
+  </div>
+
+  <!-- SIP Inflows — OK, 83% of target -->
+  <div class="card card-sip">
+    <div class="kpi-label">SIP Inflows</div>
+    <div class="kpi-value">₹4.6Cr<sub>&nbsp;/day avg</sub></div>
+    <div class="kpi-prior">Baseline 90d avg: ₹4.4Cr</div>
+    <div class="delta-up">↑ 4.5% vs baseline</div>
+    <div class="prog-label">Monthly target: ₹165Cr</div>
+    <div class="prog-wrap"><div class="prog-fill" style="width:83%;background:#ff7f0e"></div></div>
+    <div class="prog-text" style="color:#ff7f0e">83% of target achieved</div>
+    <div style="margin-top:8px"><span class="badge badge-OK">OK</span></div>
+  </div>
+
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════════
+     OPTION B — Two comparison rows
+═══════════════════════════════════════════════════════════════ -->
+<hr class="divider">
+<div class="section-header" style="margin-top:28px">Option B — Two comparison rows</div>
+<p class="section-sub">Baseline delta and target achievement appear as parallel labelled columns. Most compact — no extra vertical height. Good if many KPIs are on screen at once.</p>
+
+<div class="grid">
+
+  <!-- Brokerage Revenue -->
+  <div class="card card-warning">
+    <div class="kpi-label">Brokerage Revenue</div>
+    <div class="kpi-value">₹37Cr<sub>&nbsp;/day avg</sub></div>
+    <div class="compare-row">
+      <div class="compare-cell">
+        <div class="compare-label">vs Baseline (90d)</div>
+        <div class="compare-val delta-down">↓ 0.8%</div>
+      </div>
+      <div class="compare-cell">
+        <div class="compare-label">vs Target (106%)</div>
+        <div class="compare-val" style="color:#2ca02c">↑ 6%</div>
+      </div>
+    </div>
+    <div style="margin-top:8px"><span class="badge badge-Warning">Warning</span></div>
+    <div class="kpi-note">Anomaly at South › HNI: -49.2% vs baseline</div>
+  </div>
+
+  <!-- AUM -->
+  <div class="card card-ok">
+    <div class="kpi-label">Total AUM</div>
+    <div class="kpi-value">₹19,376Cr<sub>&nbsp;avg</sub></div>
+    <div class="compare-row">
+      <div class="compare-cell">
+        <div class="compare-label">vs Baseline (90d)</div>
+        <div class="compare-val delta-up">↑ 0.1%</div>
+      </div>
+      <div class="compare-cell">
+        <div class="compare-label">vs Target (88%)</div>
+        <div class="compare-val" style="color:#ff7f0e">↓ 12%</div>
+      </div>
+    </div>
+    <div style="margin-top:8px"><span class="badge badge-OK">OK</span></div>
+  </div>
+
+  <!-- SIP Inflows -->
+  <div class="card card-sip">
+    <div class="kpi-label">SIP Inflows</div>
+    <div class="kpi-value">₹4.6Cr<sub>&nbsp;/day avg</sub></div>
+    <div class="compare-row">
+      <div class="compare-cell">
+        <div class="compare-label">vs Baseline (90d)</div>
+        <div class="compare-val delta-up">↑ 4.5%</div>
+      </div>
+      <div class="compare-cell">
+        <div class="compare-label">vs Target (83%)</div>
+        <div class="compare-val" style="color:#ff7f0e">↓ 17%</div>
+      </div>
+    </div>
+    <div style="margin-top:8px"><span class="badge badge-OK">OK</span></div>
+  </div>
+
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════════
+     OPTION C — Achievement % badge
+═══════════════════════════════════════════════════════════════ -->
+<hr class="divider">
+<div class="section-header" style="margin-top:28px">Option C — Achievement % badge (pill)</div>
+<p class="section-sub">Smallest footprint — a coloured pill sits next to the status badge. Clean look; trades detail for minimalism. Works best if target context isn't the primary focus.</p>
+
+<div class="grid">
+
+  <!-- Brokerage Revenue -->
+  <div class="card card-warning">
+    <div class="kpi-label">Brokerage Revenue</div>
+    <div class="kpi-value">₹37Cr<sub>&nbsp;/day avg</sub></div>
+    <div class="kpi-prior">Baseline 90d avg: ₹37Cr</div>
+    <div class="delta-down">↓ 0.8% vs baseline</div>
+    <div style="margin-top:8px">
+      <span class="badge badge-Warning">Warning</span>
+      &nbsp;
+      <span class="badge badge-tgt-ok">106% of target</span>
+    </div>
+    <div class="kpi-note">Anomaly at South › HNI: -49.2% vs baseline</div>
+  </div>
+
+  <!-- AUM -->
+  <div class="card card-ok">
+    <div class="kpi-label">Total AUM</div>
+    <div class="kpi-value">₹19,376Cr<sub>&nbsp;avg</sub></div>
+    <div class="kpi-prior">Baseline 90d avg: ₹19,352Cr</div>
+    <div class="delta-up">↑ 0.1% vs baseline</div>
+    <div style="margin-top:8px">
+      <span class="badge badge-OK">OK</span>
+      &nbsp;
+      <span class="badge badge-tgt-mid">88% of target</span>
+    </div>
+  </div>
+
+  <!-- SIP Inflows -->
+  <div class="card card-sip">
+    <div class="kpi-label">SIP Inflows</div>
+    <div class="kpi-value">₹4.6Cr<sub>&nbsp;/day avg</sub></div>
+    <div class="kpi-prior">Baseline 90d avg: ₹4.4Cr</div>
+    <div class="delta-up">↑ 4.5% vs baseline</div>
+    <div style="margin-top:8px">
+      <span class="badge badge-OK">OK</span>
+      &nbsp;
+      <span class="badge badge-tgt-mid">83% of target</span>
+    </div>
+  </div>
+
+</div>
+
+<hr class="divider" style="margin-top:36px">
+<p style="margin-top:16px;font-size:0.80rem;color:#666">
+  Pick an option and tell me — I'll wire it into the main dashboard. <br>
+  Badge colour thresholds: ≥90% green · 70–89% orange · &lt;70% red.
+</p>
+
+</body>
+</html>

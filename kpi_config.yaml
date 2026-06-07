@@ -1,0 +1,256 @@
+# KPI Registry — Broking & Wealth Management Firm
+# Each KPI defines its domain, targets, alert thresholds, and correlated KPIs
+
+hierarchy_levels:
+  - region
+  - branch
+  - rm_id
+  - segment
+
+dimensions:
+  regions: [North, South, East, West]
+  branches:
+    North: [Delhi, Chandigarh, Jaipur]
+    South: [Chennai, Bangalore, Hyderabad]
+    East: [Kolkata, Bhubaneswar, Patna]
+    West: [Mumbai, Pune, Ahmedabad]
+  segments: [Retail, HNI, Ultra_HNI]
+
+kpis:
+
+  # ─── BROKING DOMAIN ──────────────────────────────────────────────────────────
+
+  brokerage_revenue:
+    display_name: "Brokerage Revenue"
+    domain: Broking
+    unit: "₹ Lakhs"
+    direction: higher_is_better
+    frequency: daily
+    zscore_threshold: 2.0
+    target_breach_pct: 12
+    mom_alert_pct: 15
+    description: "Total brokerage commission earned across all products"
+    correlates:
+      - equity_volume
+      - derivatives_volume
+      - active_clients
+    drill_priority: 1
+
+  equity_volume:
+    display_name: "Equity Cash Volume"
+    domain: Broking
+    unit: "₹ Lakhs"
+    direction: higher_is_better
+    frequency: daily
+    zscore_threshold: 2.2
+    target_breach_pct: 15
+    mom_alert_pct: 20
+    description: "Total cash equity turnover (buy + sell)"
+    correlates:
+      - brokerage_revenue
+      - active_clients
+      - nifty_return
+    drill_priority: 2
+
+  derivatives_volume:
+    display_name: "Derivatives Volume"
+    domain: Broking
+    unit: "₹ Lakhs"
+    direction: higher_is_better
+    frequency: daily
+    zscore_threshold: 2.2
+    target_breach_pct: 15
+    mom_alert_pct: 20
+    description: "Total F&O notional turnover"
+    correlates:
+      - brokerage_revenue
+      - active_clients
+      - nifty_return
+    drill_priority: 2
+
+  active_clients:
+    display_name: "Active Trading Clients"
+    domain: Broking
+    unit: "Count"
+    direction: higher_is_better
+    frequency: daily
+    zscore_threshold: 2.0
+    target_breach_pct: 10
+    mom_alert_pct: 12
+    description: "Unique clients who executed at least one trade in the period"
+    correlates:
+      - brokerage_revenue
+      - equity_volume
+      - client_count
+    drill_priority: 1
+
+  new_accounts:
+    display_name: "New Account Openings"
+    domain: Clients
+    unit: "Count"
+    direction: higher_is_better
+    frequency: daily
+    zscore_threshold: 1.8
+    target_breach_pct: 20
+    mom_alert_pct: 25
+    description: "Number of new trading/demat accounts opened"
+    correlates:
+      - client_count
+      - active_clients
+    drill_priority: 3
+
+  # ─── WEALTH / AUM DOMAIN ─────────────────────────────────────────────────────
+
+  aum:
+    display_name: "Total AUM"
+    domain: Wealth
+    unit: "₹ Lakhs"
+    direction: higher_is_better
+    frequency: daily
+    zscore_threshold: 1.8
+    target_breach_pct: 8
+    mom_alert_pct: 10
+    description: "Total Assets Under Management across MF, PMS, Bonds"
+    correlates:
+      - sip_inflows
+      - lumpsum_inflows
+      - redemptions
+      - net_flows
+    drill_priority: 1
+
+  sip_inflows:
+    display_name: "SIP Inflows"
+    domain: Wealth
+    unit: "₹ Lakhs"
+    direction: higher_is_better
+    frequency: daily
+    zscore_threshold: 2.0
+    target_breach_pct: 15
+    mom_alert_pct: 15
+    description: "Systematic Investment Plan collections for the period"
+    correlates:
+      - aum
+      - net_flows
+      - client_count
+    drill_priority: 2
+
+  lumpsum_inflows:
+    display_name: "Lumpsum Inflows"
+    domain: Wealth
+    unit: "₹ Lakhs"
+    direction: higher_is_better
+    frequency: daily
+    zscore_threshold: 2.5
+    target_breach_pct: 20
+    mom_alert_pct: 25
+    description: "One-time mutual fund and bond investments"
+    correlates:
+      - aum
+      - net_flows
+      - nifty_return
+    drill_priority: 3
+
+  redemptions:
+    display_name: "Redemptions"
+    domain: Wealth
+    unit: "₹ Lakhs"
+    direction: lower_is_better
+    frequency: daily
+    zscore_threshold: 2.0
+    target_breach_pct: 20
+    mom_alert_pct: 25
+    description: "Total redemptions / withdrawals from wealth products"
+    correlates:
+      - net_flows
+      - aum
+      - nifty_return
+      - client_count
+    drill_priority: 2
+
+  net_flows:
+    display_name: "Net Flows"
+    domain: Wealth
+    unit: "₹ Lakhs"
+    direction: higher_is_better
+    frequency: daily
+    zscore_threshold: 2.0
+    target_breach_pct: 25
+    mom_alert_pct: 30
+    description: "Inflows minus redemptions; key predictor of AUM growth"
+    correlates:
+      - aum
+      - sip_inflows
+      - lumpsum_inflows
+      - redemptions
+    drill_priority: 1
+
+  # ─── CLIENT ACQUISITION & RETENTION DOMAIN ───────────────────────────────────
+
+  client_count:
+    display_name: "Total Active Clients"
+    domain: Clients
+    unit: "Count"
+    direction: higher_is_better
+    frequency: daily
+    zscore_threshold: 1.8
+    target_breach_pct: 8
+    mom_alert_pct: 10
+    description: "Total number of clients with active relationship (not dormant)"
+    correlates:
+      - active_clients
+      - new_accounts
+      - aum
+      - brokerage_revenue
+    drill_priority: 1
+
+  activation_rate:
+    display_name: "Client Activation Rate"
+    domain: Clients
+    unit: "%"
+    direction: higher_is_better
+    frequency: daily
+    zscore_threshold: 2.0
+    target_breach_pct: 10
+    mom_alert_pct: 12
+    description: "% of new accounts that execute first trade within 30 days"
+    correlates:
+      - new_accounts
+      - active_clients
+    drill_priority: 2
+
+  # ─── MARKET CONTEXT (external benchmark, not a firm KPI) ─────────────────────
+  # Used only for cross-KPI validation to distinguish market-driven anomalies
+
+  nifty_return:
+    display_name: "Nifty 50 Daily Return"
+    domain: Market
+    unit: "%"
+    direction: higher_is_better
+    frequency: daily
+    zscore_threshold: 2.5
+    target_breach_pct: 999
+    mom_alert_pct: 999
+    description: "Daily % return of Nifty 50 index — external market benchmark"
+    correlates:
+      - equity_volume
+      - derivatives_volume
+      - lumpsum_inflows
+    drill_priority: 99
+
+# ─── TARGETS CONFIGURATION ────────────────────────────────────────────────────
+# Monthly targets as % uplift over rolling 90-day average
+# These simulate realistic business targets set by leadership
+
+targets:
+  brokerage_revenue:   { monthly_growth_pct: 5,  annual_target_lakhs: 45000 }
+  equity_volume:       { monthly_growth_pct: 5,  annual_target_lakhs: 900000 }
+  derivatives_volume:  { monthly_growth_pct: 8,  annual_target_lakhs: 600000 }
+  active_clients:      { monthly_growth_pct: 3,  annual_target_count: 18000 }
+  new_accounts:        { monthly_growth_pct: 8,  annual_target_count: 6000 }
+  aum:                 { monthly_growth_pct: 4,  annual_target_lakhs: 500000 }
+  sip_inflows:         { monthly_growth_pct: 6,  annual_target_lakhs: 12000 }
+  lumpsum_inflows:     { monthly_growth_pct: 5,  annual_target_lakhs: 20000 }
+  redemptions:         { monthly_growth_pct: -2, annual_target_lakhs: 8000 }
+  net_flows:           { monthly_growth_pct: 8,  annual_target_lakhs: 25000 }
+  client_count:        { monthly_growth_pct: 2,  annual_target_count: 85000 }
+  activation_rate:     { monthly_growth_pct: 1,  annual_target_pct: 72 }
