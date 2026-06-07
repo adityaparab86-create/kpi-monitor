@@ -81,7 +81,7 @@ BRANCH_MULT = {
 }
 
 # RM-level performance spread (some RMs outperform base)
-RM_PERFORMANCE_SEED = 99
+RM_PERFORMANCE_SEED = 3017
 
 
 def make_rm_multipliers(rms):

@@ -6,7 +6,7 @@ Run: streamlit run app.py
 from __future__ import annotations
 
 import sys
-from datetime import timedelta
+from datetime import date, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -169,10 +169,19 @@ def sidebar():
         "Trend Explorer",
         "About",
     ]
-    chosen = st.sidebar.radio("Navigate", pages,
-                               index=pages.index(st.session_state.page))
-    if chosen != st.session_state.page:
-        st.session_state.page = chosen
+    # Sync the radio to any button-driven navigation BEFORE the widget renders.
+    # (Widget keys can only be written before instantiation, not after.)
+    if "nav_radio" not in st.session_state:
+        st.session_state.nav_radio = st.session_state.page
+    if st.session_state.get("_nav_source") == "button":
+        st.session_state.nav_radio = st.session_state.page
+        del st.session_state["_nav_source"]
+
+    st.sidebar.radio("Navigate", pages, key="nav_radio")
+
+    # If the user clicked the radio, propagate to page state.
+    if st.session_state.nav_radio != st.session_state.page:
+        st.session_state.page = st.session_state.nav_radio
 
     st.sidebar.divider()
     st.sidebar.subheader("Detection windows")
@@ -227,16 +236,26 @@ def page_scorecard(
     st.title("KPI Health Scorecard")
     loader = get_loader()
 
-    # Build a lookup: kpi → worst anomaly across all levels
-    kpi_worst: dict[str, Anomaly] = {}
-    for a in anomalies:
-        if a.kpi not in kpi_worst or a.severity_score > kpi_worst[a.kpi].severity_score:
-            kpi_worst[a.kpi] = a
+    # Build a lookup: kpi → (worst anomaly, its index in the global anomalies list)
+    # Ranking: highest severity → deepest hierarchy level → largest absolute impact.
+    # This surfaces the single most actionable root-cause dimension for each KPI card.
+    _dim_depth = {"firm": 0, "region": 1, "branch": 2, "rm_id": 3, "segment": 4}
+    def _anomaly_rank(a: Anomaly) -> tuple:
+        return (
+            -a.severity_score,
+            -_dim_depth.get(a.dimension_level, 0),
+            -abs(a.actual_value - a.expected_value),
+        )
+
+    kpi_worst: dict[str, tuple[Anomaly, int]] = {}
+    for _i, a in enumerate(anomalies):
+        if a.kpi not in kpi_worst or _anomaly_rank(a) < _anomaly_rank(kpi_worst[a.kpi][0]):
+            kpi_worst[a.kpi] = (a, _i)
 
     # Summary row
-    n_critical = sum(1 for a in kpi_worst.values() if a.severity == "Critical")
-    n_warning  = sum(1 for a in kpi_worst.values() if a.severity == "Warning")
-    n_watch    = sum(1 for a in kpi_worst.values() if a.severity == "Watch")
+    n_critical = sum(1 for a, _ in kpi_worst.values() if a.severity == "Critical")
+    n_warning  = sum(1 for a, _ in kpi_worst.values() if a.severity == "Warning")
+    n_watch    = sum(1 for a, _ in kpi_worst.values() if a.severity == "Watch")
     n_ok       = len(loader.firm_kpis()) - len(kpi_worst)
 
     c1, c2, c3, c4 = st.columns(4)
@@ -247,10 +266,11 @@ def page_scorecard(
 
     # Window summary caption
     st.caption(
-        "  ·  ".join(
+        "*(analysis window / baseline window):*  "
+        + "  ·  ".join(
             f"{d} **{domain_windows[d]['analysis']}d** / {domain_windows[d]['baseline']}d"
             for d in ("Broking", "Wealth", "Clients")
-        ) + "  *(analysis / baseline)*"
+        )
     )
 
     # Volatility regime badge
@@ -309,7 +329,8 @@ def page_scorecard(
                 tgt_col   = "#2ca02c" if tgt_delta >= 0 else "#ff7f0e" if tgt_delta >= -20 else "#d62728"
                 tgt_arrow = "↑" if tgt_delta >= 0 else "↓"
 
-                worst = kpi_worst.get(kpi)
+                worst_pair = kpi_worst.get(kpi)
+                worst, worst_idx = worst_pair if worst_pair else (None, 0)
                 if worst:
                     severity  = worst.severity
                     css_cls   = f"card-{severity.lower()}"
@@ -321,7 +342,15 @@ def page_scorecard(
                 else:
                     css_cls   = "card-ok"
                     badge     = '<span class="badge badge-OK">Healthy</span>'
-                    anom_note = ""
+                    is_bad_move = (
+                        (delta_pct < 0 and direction == "higher_is_better")
+                        or (delta_pct > 0 and direction == "lower_is_better")
+                    )
+                    anom_note = (
+                        f"↓{abs(delta_pct):.0f}% drop within normal variance"
+                        if is_bad_move and abs(delta_pct) >= 3
+                        else ""
+                    )
 
                 arrow     = "↑" if delta_pct > 0 else "↓"
                 arrow_col = (
@@ -333,6 +362,21 @@ def page_scorecard(
                     f'<div class="kpi-note">{anom_note}</div>'
                     if anom_note else ""
                 )
+
+                # ── Option A: mini region breakdown inside anomalous cards ────
+                bd_frag = ""
+                if worst:
+                    bd_rows = get_card_breakdown(id(loader), kpi, aw, bw)[:3]
+                    if bd_rows:
+                        bd_frag = (
+                            '<div style="margin-top:8px;padding-top:7px;'
+                            'border-top:1px solid rgba(128,128,128,0.15)">'
+                            '<div style="font-size:0.60rem;text-transform:uppercase;'
+                            'letter-spacing:0.07em;opacity:0.4;margin-bottom:5px">'
+                            'by region</div>'
+                            + _breakdown_rows_html(bd_rows, direction)
+                            + '</div>'
+                        )
 
                 st.markdown(f"""
 <div class="kpi-card {css_cls}">
@@ -348,9 +392,21 @@ def page_scorecard(
       <div style="font-size:0.85rem;color:{tgt_col};font-weight:600">{tgt_arrow} {abs(tgt_delta):.0f}%</div>
     </div>
   </div>
+  {bd_frag}
   <div class="kpi-card-footer">{badge}{anom_html}</div>
 </div>
 """, unsafe_allow_html=True)
+                # Expand button — only for anomalous KPIs (Option A)
+                if worst:
+                    if st.button(
+                        "Investigate →",
+                        key=f"inv_sc_{kpi}",
+                        use_container_width=True,
+                    ):
+                        st.session_state.selected_anomaly_idx = worst_idx
+                        st.session_state.page = "Investigate Anomaly"
+                        st.session_state._nav_source = "button"
+                        st.rerun()
 
         st.write("")
 
@@ -359,7 +415,7 @@ def page_scorecard(
 # PAGE 2 — Anomaly Alerts
 # ─────────────────────────────────────────────────────────────────────────────
 
-def page_anomalies(anomalies: list[Anomaly]):
+def page_anomalies(anomalies: list[Anomaly], domain_windows: dict | None = None):
     st.title("Anomaly Alerts")
 
     loader = get_loader()
@@ -367,65 +423,155 @@ def page_anomalies(anomalies: list[Anomaly]):
         st.success("No anomalies detected in the current analysis window.")
         return
 
-    # Filters
+    # Persistent filter store — plain session state keys (not widget keys).
+    # Streamlit removes widget-key entries when the widget isn't rendered,
+    # but leaves plain keys alone, so these survive page navigation.
+    kpi_options = sorted(set(a.kpi_name for a in anomalies))
+    _all_levels = ["firm"] + HIERARCHY
+    if "_f_sev"    not in st.session_state: st.session_state._f_sev    = ["Critical", "Warning", "Watch"]
+    if "_f_domain" not in st.session_state: st.session_state._f_domain = ["Broking", "Wealth", "Clients"]
+    if "_f_level"  not in st.session_state: st.session_state._f_level  = _all_levels
+    if "_f_kpi"    not in st.session_state: st.session_state._f_kpi    = kpi_options
+    else:
+        st.session_state._f_kpi = [k for k in st.session_state._f_kpi if k in kpi_options]
+
+    # Filters — row 1: Severity / Domain / Dimension level
     fc1, fc2, fc3 = st.columns(3)
     with fc1:
-        sev_filter = st.multiselect(
-            "Severity", ["Critical", "Warning", "Watch"],
-            default=["Critical", "Warning", "Watch"],
-        )
+        sev_filter    = st.multiselect("Severity",        ["Critical", "Warning", "Watch"],
+                                       default=st.session_state._f_sev)
     with fc2:
-        domain_filter = st.multiselect(
-            "Domain", ["Broking", "Wealth", "Clients"],
-            default=["Broking", "Wealth", "Clients"],
-        )
+        domain_filter = st.multiselect("Domain",          ["Broking", "Wealth", "Clients"],
+                                       default=st.session_state._f_domain)
     with fc3:
-        level_filter = st.multiselect(
-            "Dimension level",
-            ["firm"] + HIERARCHY,
-            default=["firm"] + HIERARCHY,
-        )
+        level_filter  = st.multiselect("Dimension level", _all_levels,
+                                       default=st.session_state._f_level)
 
-    filtered = [
-        a for a in anomalies
-        if a.severity in sev_filter
-        and a.domain in domain_filter
-        and a.dimension_level in level_filter
-    ]
+    # Filters — row 2: KPI search
+    kpi_filter = st.multiselect("KPI", kpi_options, default=st.session_state._f_kpi,
+                                placeholder="All KPIs — select to narrow down")
+
+    # Write selections back to persistent store immediately after render
+    st.session_state._f_sev    = sev_filter
+    st.session_state._f_domain = domain_filter
+    st.session_state._f_level  = level_filter
+    st.session_state._f_kpi    = kpi_filter
+
+    _level_order = {"firm": 0, "region": 1, "branch": 2, "rm_id": 3, "segment": 4}
+    filtered = sorted(
+        (
+            a for a in anomalies
+            if a.severity in sev_filter
+            and a.domain in domain_filter
+            and a.dimension_level in level_filter
+            and a.kpi_name in kpi_filter
+        ),
+        key=lambda a: (
+            _level_order.get(a.dimension_level, 9),   # region first … segment last
+            -abs(a.actual_value - a.expected_value),   # largest contribution first
+        ),
+    )
 
     st.caption(f"Showing {len(filtered)} of {len(anomalies)} anomalies")
     st.divider()
 
-    for idx, anom in enumerate(filtered[:50]):
-        sev_color = SEVERITY_COLORS.get(anom.severity, "#ccc")
-        dim_label = anom.dimension_label()
-        dev_arrow = "▼" if anom.deviation_pct < 0 else "▲"
-        dev_color = (
-            "red"   if (anom.deviation_pct < 0 and anom.direction == "higher_is_better")
-                    or (anom.deviation_pct > 0 and anom.direction == "lower_is_better")
-            else "green"
-        )
+    if not filtered:
+        if "firm" in level_filter and len(level_filter) == 1:
+            st.info(
+                "No firm-wide anomalies detected. Current anomalies are localised within "
+                "specific regions or branches — the firm aggregate remains within normal range. "
+                "Try including **Region** or **Branch** in the Dimension Level filter."
+            )
+        else:
+            st.info("No anomalies match the current filters. Try broadening the Severity, Domain, or Dimension Level selections.")
+        return
 
-        with st.container():
-            col1, col2, col3, col4, col5 = st.columns([1, 3, 2, 2, 2])
-            col1.markdown(
-                f'<span class="badge badge-{anom.severity}">{anom.severity}</span>',
+    _dw = domain_windows or {}
+
+    for row_idx, anom in enumerate(filtered[:50]):
+        # Determine bad-direction colour
+        is_bad = (
+            (anom.deviation_pct < 0 and anom.direction == "higher_is_better")
+            or (anom.deviation_pct > 0 and anom.direction == "lower_is_better")
+        )
+        dev_col = "#d62728" if is_bad else "#2ca02c"
+        sign    = "↓" if anom.deviation_pct < 0 else "↑"
+        method  = anom.detection_method.replace("_", " ").title()
+
+        # ── Option C: left = metadata, right = ranked contributors ───────────
+        left, right = st.columns([5, 7])
+
+        with left:
+            st.markdown(
+                f'<div style="padding:4px 0 8px">'
+                f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">'
+                f'<span class="badge badge-{anom.severity}">{anom.severity}</span>'
+                f'<span style="font-size:0.68rem;opacity:0.45">{method} · {anom.domain}</span>'
+                f'</div>'
+                f'<div style="font-size:0.93rem;font-weight:700;margin-bottom:2px">'
+                f'{anom.kpi_name}</div>'
+                f'<div style="font-size:0.72rem;opacity:0.55;margin-bottom:10px">'
+                f'{anom.dimension_label()}</div>'
+                f'<div style="display:flex;gap:18px">'
+                f'<div><div style="font-size:0.62rem;opacity:0.45">Actual</div>'
+                f'<div style="font-size:0.85rem;font-weight:600">'
+                f'{_fmt(anom.actual_value, anom.unit)}</div></div>'
+                f'<div><div style="font-size:0.62rem;opacity:0.45">Expected</div>'
+                f'<div style="font-size:0.85rem;font-weight:600">'
+                f'{_fmt(anom.expected_value, anom.unit)}</div></div>'
+                f'<div><div style="font-size:0.62rem;opacity:0.45">Deviation</div>'
+                f'<div style="font-size:0.85rem;font-weight:600;color:{dev_col}">'
+                f'{sign}{abs(anom.deviation_pct):.1f}%</div></div>'
+                f'</div>'
+                f'</div>',
                 unsafe_allow_html=True,
             )
-            col2.markdown(f"**{anom.kpi_name}**  \n`{dim_label}`")
-            col3.markdown(
-                f"<span style='color:{dev_color};font-size:1.1rem'>"
-                f"{dev_arrow} {abs(anom.deviation_pct):.1f}%</span>",
-                unsafe_allow_html=True,
-            )
-            col4.caption(
-                f"Actual: **{_fmt(anom.actual_value, anom.unit)}**  \n"
-                f"Exp: {_fmt(anom.expected_value, anom.unit)}"
-            )
-            if col5.button("Investigate", key=f"inv_{idx}_{anom.kpi}_{dim_label}"):
+            if st.button("Investigate →", key=f"inv_{row_idx}_{anom.kpi}"):
                 st.session_state.selected_anomaly_idx = anomalies.index(anom)
                 st.session_state.page = "Investigate Anomaly"
+                st.session_state._nav_source = "button"
                 st.rerun()
+
+        with right:
+            aw         = _dw.get(anom.domain, {}).get("analysis", 14)
+            bw         = _dw.get(anom.domain, {}).get("baseline", 90)
+            dims_tuple = tuple(sorted(anom.dimension_values.items()))
+            l1_rows, l2_rows, l1_label, l2_label = get_alert_breakdown(
+                id(loader), anom.kpi, aw, bw, anom.dimension_level, dims_tuple,
+            )
+
+            if l1_rows:
+                l1_html   = _breakdown_rows_html(l1_rows, anom.direction)
+                divider_h = (
+                    '<div style="width:1px;background:rgba(128,128,128,0.2);'
+                    'margin:0 6px;flex-shrink:0"></div>'
+                ) if l2_rows else ""
+                l2_block = (
+                    f'<div style="flex:1;min-width:0">'
+                    f'<div style="font-size:0.68rem;opacity:0.5;margin-bottom:5px">'
+                    f'{l2_label}</div>'
+                    + _breakdown_rows_html(l2_rows, anom.direction)
+                    + '</div>'
+                ) if l2_rows else ""
+
+                st.markdown(
+                    '<div style="padding:4px 0 8px">'
+                    '<div style="font-size:0.60rem;text-transform:uppercase;'
+                    'letter-spacing:0.07em;opacity:0.4;margin-bottom:8px">'
+                    'Ranked contributors</div>'
+                    '<div style="display:flex;gap:4px">'
+                    '<div style="flex:1;min-width:0">'
+                    f'<div style="font-size:0.68rem;opacity:0.5;margin-bottom:5px">'
+                    f'{l1_label}</div>'
+                    + l1_html
+                    + '</div>'
+                    + divider_h
+                    + l2_block
+                    + '</div></div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.caption("No sub-level breakdown available for this dimension.")
 
         st.divider()
 
@@ -446,10 +592,11 @@ def page_investigate(
         st.info("No anomalies to investigate. Adjust detection settings in the sidebar.")
         return
 
-    # Anomaly selector
+    # Anomaly selector — use the FULL anomalies list so buttons that navigate
+    # to an anomaly beyond position 30 still land on the correct entry.
     options = [
         f"[{a.severity}] {a.kpi_name} — {a.dimension_label()} ({a.deviation_pct:+.1f}%)"
-        for a in anomalies[:30]
+        for a in anomalies
     ]
     sel_idx = st.session_state.get("selected_anomaly_idx") or 0
     sel_idx = min(sel_idx, len(options) - 1)
@@ -1004,6 +1151,172 @@ def _fmt(value: float, unit: str) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Contribution breakdown helpers  (Option A — scorecard, Option C — alerts)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _level_breakdown_rows(
+    loader: DataLoader,
+    kpi: str,
+    level: str,
+    filters: dict,
+    analysis_start: date,
+    baseline_start: date,
+    baseline_end: date,
+) -> list[dict]:
+    """
+    Per-dimension contribution rows at `level` (e.g. 'region').
+    Each row: {dim, deviation_pct, contribution_pct, variance}.
+    Sorted by |variance| descending so biggest contributor is first.
+    """
+    if level not in HIERARCHY:
+        return []
+
+    idx        = HIERARCHY.index(level)
+    group_cols = HIERARCHY[: idx + 1]
+    df         = loader.aggregate(group_by=group_cols)
+    if kpi not in df.columns or df.empty:
+        return []
+
+    # Apply parent-dimension filters (e.g. restrict to South region only)
+    for col, val in filters.items():
+        if col in df.columns and val:
+            df = df[df[col] == val]
+
+    df_act  = df[df["date"] >= pd.Timestamp(analysis_start)]
+    df_base = df[
+        (df["date"] >= pd.Timestamp(baseline_start))
+        & (df["date"] <= pd.Timestamp(baseline_end))
+    ]
+
+    if df_act.empty or df_base.empty:
+        return []
+
+    # Daily average per dimension value (mean normalises for different window lengths)
+    act    = df_act.groupby(level)[kpi].mean()
+    base   = df_base.groupby(level)[kpi].mean()
+    common = act.index.intersection(base.index)
+    if len(common) == 0:
+        return []
+
+    act, base = act[common], base[common]
+    variance  = act - base
+
+    direction = loader.kpi_direction(kpi)
+    bad       = variance[variance < 0] if direction == "higher_is_better" else variance[variance > 0]
+    total_bad = bad.abs().sum() if len(bad) > 0 else variance.abs().sum()
+
+    rows: list[dict] = []
+    for dim in common:
+        dev_pct = (act[dim] - base[dim]) / abs(base[dim]) * 100 if base[dim] != 0 else 0.0
+        contrib = abs(variance[dim]) / total_bad * 100 if total_bad != 0 else 0.0
+        rows.append({
+            "dim":              str(dim),
+            "deviation_pct":   round(float(dev_pct),  1),
+            "contribution_pct": round(float(contrib),  1),
+            "variance":         float(variance[dim]),
+        })
+
+    rows.sort(key=lambda r: abs(r["variance"]), reverse=True)
+    return rows
+
+
+def _breakdown_rows_html(rows: list[dict], direction: str) -> str:
+    """Render contribution rows as a compact HTML fragment (bars + deviation %)."""
+    html = ""
+    for r in rows:
+        bar_w   = min(int(abs(r["contribution_pct"])), 100)
+        is_bad  = (
+            (r["deviation_pct"] < 0 and direction == "higher_is_better")
+            or (r["deviation_pct"] > 0 and direction == "lower_is_better")
+        )
+        bar_col = (
+            "#d62728" if is_bad and abs(r["deviation_pct"]) >= 20 else
+            "#ff7f0e" if is_bad else
+            "#2ca02c"
+        )
+        dev_col = "#d62728" if is_bad else "#2ca02c"
+        sign    = "↓" if r["deviation_pct"] < 0 else "↑"
+        html += (
+            '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">'
+            f'<div style="width:60px;font-size:0.71rem;opacity:0.80;overflow:hidden;'
+            f'text-overflow:ellipsis;white-space:nowrap" title="{r["dim"]}">{r["dim"]}</div>'
+            f'<div style="color:{dev_col};font-size:0.71rem;font-weight:600;'
+            f'min-width:38px;text-align:right">{sign}{abs(r["deviation_pct"]):.0f}%</div>'
+            '<div style="flex:1;background:rgba(128,128,128,0.18);border-radius:3px;'
+            'height:5px;overflow:hidden">'
+            f'<div style="width:{bar_w}%;height:5px;border-radius:3px;background:{bar_col}"></div>'
+            '</div>'
+            f'<div style="font-size:0.65rem;opacity:0.45;min-width:24px;text-align:right">'
+            f'{r["contribution_pct"]:.0f}%</div>'
+            '</div>'
+        )
+    return html
+
+
+@st.cache_data(ttl=300)
+def get_card_breakdown(_loader_id, kpi: str, aw: int, bw: int) -> list[dict]:
+    """Region-level breakdown used by anomalous KPI cards (Option A). Cached 5 min."""
+    loader  = get_loader()
+    end     = loader.df["date"].max().date()
+    a_start = end - timedelta(days=aw - 1)
+    b_start = end - timedelta(days=bw + aw)
+    b_end   = a_start - timedelta(days=1)
+    return _level_breakdown_rows(loader, kpi, "region", {}, a_start, b_start, b_end)
+
+
+@st.cache_data(ttl=300)
+def get_alert_breakdown(
+    _loader_id,
+    kpi: str,
+    aw: int,
+    bw: int,
+    anom_level: str,
+    anom_dims_tuple: tuple,   # hashable: tuple(sorted(dimension_values.items()))
+) -> tuple[list, list, str, str]:
+    """
+    Two-level ranked breakdown for an alert row (Option C).
+    Returns (l1_rows[:3], l2_rows[:3], l1_label, l2_label).
+    L1 = first level below the anomaly; L2 = sub-level of worst L1 contributor.
+    """
+    loader     = get_loader()
+    dim_values = dict(anom_dims_tuple)
+    end        = loader.df["date"].max().date()
+    a_start    = end - timedelta(days=aw - 1)
+    b_start    = end - timedelta(days=bw + aw)
+    b_end      = a_start - timedelta(days=1)
+
+    # Determine L1 level relative to where the anomaly was detected
+    if anom_level == "firm" or anom_level not in HIERARCHY:
+        l1_level   = "region"
+        l1_filters: dict = {}
+    elif anom_level == HIERARCHY[-1]:
+        # Segment is the leaf level — nothing to drill into
+        return [], [], "", ""
+    else:
+        h_idx      = HIERARCHY.index(anom_level)
+        l1_level   = HIERARCHY[h_idx + 1]
+        # Filters = all ancestors up to and including the anomaly's own level
+        l1_filters = {k: v for k, v in dim_values.items() if k in HIERARCHY[: h_idx + 1]}
+
+    l1_rows  = _level_breakdown_rows(loader, kpi, l1_level, l1_filters, a_start, b_start, b_end)
+    l1_label = l1_level.replace("_", " ").title()
+
+    # L2: sub-level of the worst L1 contributor
+    l2_rows: list[dict] = []
+    l2_label = ""
+    if l1_rows:
+        worst_dim = l1_rows[0]["dim"]
+        l1_h_idx  = HIERARCHY.index(l1_level) if l1_level in HIERARCHY else -1
+        if 0 <= l1_h_idx < len(HIERARCHY) - 1:
+            l2_level   = HIERARCHY[l1_h_idx + 1]
+            l2_filters = {**l1_filters, l1_level: worst_dim}
+            l2_rows    = _level_breakdown_rows(loader, kpi, l2_level, l2_filters, a_start, b_start, b_end)
+            l2_label   = f"{worst_dim} → {l2_level.replace('_', ' ').title()}"
+
+    return l1_rows[:3], l2_rows[:3], l1_label, l2_label
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -1042,7 +1355,7 @@ def main():
     if page == "KPI Scorecard":
         page_scorecard(anomalies, domain_windows, regime)
     elif page == "Anomaly Alerts":
-        page_anomalies(anomalies)
+        page_anomalies(anomalies, domain_windows)
     elif page == "Investigate Anomaly":
         page_investigate(anomalies, domain_windows, regime)
     elif page == "Trend Explorer":

@@ -52,10 +52,14 @@ class DrillDownAnalyzer:
 
     def analyze(self, anomaly: Anomaly, baseline_window: int = 90) -> DrillPath:
         """
-        Trace the anomaly path from firm level down to the deepest identified
-        dimension.  For anomalies already detected at a deep level (e.g.,
-        region > branch > segment), confirms the path at each step.
-        For firm-level anomalies, auto-discovers the root cause.
+        Trace the full Firm → Region → Branch → RM → Segment path.
+
+        Strategy:
+        - For firm-level anomalies or anomalies without a known path: fully auto-discover
+          (pick the highest-variance child at each step).
+        - For deeper anomalies (region / branch / rm / segment): follow the known path
+          for levels AT OR ABOVE the detected level, then auto-discover deeper — so a
+          region-level anomaly still drills all the way to RM and Segment.
         """
         kpi            = anomaly.kpi
         analysis_start = anomaly.analysis_start
@@ -63,26 +67,21 @@ class DrillDownAnalyzer:
         baseline_start = analysis_start - timedelta(days=baseline_window)
         baseline_end   = analysis_start - timedelta(days=1)
 
-        anom_level  = anomaly.dimension_level
-        known_path  = dict(anomaly.dimension_values)  # already-known dimensions
+        anom_level = anomaly.dimension_level
+        known_path = dict(anomaly.dimension_values)   # levels already identified
 
-        # Levels to traverse:
-        # - If firm: discover all levels
-        # - Otherwise: trace from top to the anomaly's level following the known path
-        if anom_level == "firm" or not known_path:
-            levels_to_trace = HIERARCHY
-            auto_drill      = True
-        else:
-            anom_idx        = HIERARCHY.index(anom_level) if anom_level in HIERARCHY else len(HIERARCHY) - 1
-            levels_to_trace = HIERARCHY[: anom_idx + 1]
-            auto_drill      = False
+        firm_level_anom  = (anom_level == "firm" or not known_path)
+        anom_h_idx       = (
+            HIERARCHY.index(anom_level)
+            if (not firm_level_anom and anom_level in HIERARCHY)
+            else -1          # -1 means "auto-drill everything"
+        )
 
         current_filters: dict[str, str] = {}
         path_nodes: list[DrillNode] = []
 
-        for level in levels_to_trace:
-            idx        = HIERARCHY.index(level)
-            group_cols = HIERARCHY[: idx + 1]
+        for h_idx, level in enumerate(HIERARCHY):     # always traverse all 4 levels
+            group_cols = HIERARCHY[: h_idx + 1]
 
             df_full = self.loader.aggregate(group_by=group_cols)
             if kpi not in df_full.columns:
@@ -98,34 +97,37 @@ class DrillDownAnalyzer:
             if not nodes:
                 break
 
-            if auto_drill:
-                primary = max(nodes, key=lambda n: abs(n.absolute_variance))
-                primary.is_primary_contributor = True
-                current_filters[level] = primary.dimension_value
-            else:
-                # Follow the known anomaly path; mark that dimension as primary
+            follow_known = (not firm_level_anom) and (h_idx <= anom_h_idx)
+
+            if follow_known:
+                # This level is part of the known anomaly path — follow it
                 known_val = known_path.get(level)
-                matched = False
+                matched   = False
                 for n in nodes:
                     if known_val and n.dimension_value == known_val:
                         n.is_primary_contributor = True
                         matched = True
                         break
-                if not matched and nodes:
-                    # fallback: mark largest contributor as primary
+                if not matched:
+                    # fallback: mark the largest contributor
                     max(nodes, key=lambda n: abs(n.absolute_variance)).is_primary_contributor = True
 
-                if known_val:
-                    current_filters[level] = known_val
+                primary_val = known_val if known_val else next(
+                    n.dimension_value for n in nodes if n.is_primary_contributor
+                )
+                current_filters[level] = primary_val
+            else:
+                # Auto-discover: pick the child with the highest absolute variance
+                primary = max(nodes, key=lambda n: abs(n.absolute_variance))
+                primary.is_primary_contributor = True
+                current_filters[level] = primary.dimension_value
 
             path_nodes.extend(nodes)
 
-        # Build root-cause label
-        root_cause_path = known_path if (not auto_drill and known_path) else current_filters
-
+        # Build full root-cause label from the complete traversal path
         root_cause_label = " › ".join(
             f"{k.replace('_', ' ').title()}: {v}"
-            for k, v in root_cause_path.items()
+            for k, v in current_filters.items()
             if v
         )
         if not root_cause_label:
@@ -138,7 +140,7 @@ class DrillDownAnalyzer:
             anomaly_summary=anomaly.summary,
             nodes=path_nodes,
             root_cause_label=root_cause_label,
-            root_cause_path=root_cause_path,
+            root_cause_path=current_filters,
         )
 
     def _decompose_level(

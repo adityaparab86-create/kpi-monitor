@@ -100,7 +100,11 @@ class AnomalyDetector:
         # Deduplicate: if the same KPI/dimension is flagged by multiple methods,
         # keep only the most severe instance
         anomalies = self._deduplicate(anomalies)
-        anomalies.sort(key=lambda a: (-a.severity_score, -abs(a.deviation_pct)))
+        # Primary sort: severity (Critical first).
+        # Tiebreaker: absolute revenue impact — the dimension with the largest
+        # monetary/volume gap from baseline surfaces first, so a high-volume RM
+        # with the same %-deviation as a smaller peer is correctly ranked higher.
+        anomalies.sort(key=lambda a: (-a.severity_score, -abs(a.actual_value - a.expected_value)))
         return anomalies
 
     def detect_for_kpi(
@@ -123,7 +127,7 @@ class AnomalyDetector:
                     baseline_start, baseline_end,
                 )
             )
-        return sorted(anomalies, key=lambda a: (-a.severity_score, -abs(a.deviation_pct)))
+        return sorted(anomalies, key=lambda a: (-a.severity_score, -abs(a.actual_value - a.expected_value)))
 
     # ─── Internal methods ──────────────────────────────────────────────────────
 
