@@ -144,6 +144,9 @@ class DataLoader:
     def target_breach_pct(self, kpi: str) -> float:
         return self.kpis.get(kpi, {}).get("target_breach_pct", 15.0)
 
+    def kpi_is_stock(self, kpi: str) -> bool:
+        return bool(self.kpis.get(kpi, {}).get("stock_metric", False))
+
     def firm_kpis(self) -> list[str]:
         return [k for k in self.kpis if k != "nifty_return"]
 

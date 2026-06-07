@@ -29,6 +29,11 @@ MONITORABLE_KPIS = [
 
 SEVERITY_LABELS = {3: "Critical", 2: "Warning", 1: "Watch"}
 SEVERITY_COLORS = {"Critical": "#d62728", "Warning": "#ff7f0e", "Watch": "#bcbd22"}
+METHOD_LABELS   = {
+    "zscore":         "z-score — statistically unusual drop for this KPI",
+    "target_breach":  "target breach",
+    "trend_reversal": "trend reversal in last 7 days",
+}
 
 
 @dataclass
@@ -284,7 +289,7 @@ class AnomalyDetector:
             f"{self.loader.kpi_display(kpi)} is "
             f"{'down' if deviation_pct < 0 else 'up'} "
             f"{abs(deviation_pct):.1f}% vs baseline"
-            f" ({severity.lower()} — {method.replace('_', ' ')})"
+            f" ({severity.lower()} — {METHOD_LABELS.get(method, method)})"
         )
 
         return Anomaly(

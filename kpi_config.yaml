@@ -107,6 +107,7 @@ kpis:
     unit: "₹ Lakhs"
     direction: higher_is_better
     frequency: daily
+    stock_metric: true
     zscore_threshold: 1.8
     target_breach_pct: 8
     mom_alert_pct: 10
@@ -192,6 +193,7 @@ kpis:
     unit: "Count"
     direction: higher_is_better
     frequency: daily
+    stock_metric: true
     zscore_threshold: 1.8
     target_breach_pct: 8
     mom_alert_pct: 10
@@ -209,6 +211,7 @@ kpis:
     unit: "%"
     direction: higher_is_better
     frequency: daily
+    stock_metric: true
     zscore_threshold: 2.0
     target_breach_pct: 10
     mom_alert_pct: 12

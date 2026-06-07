@@ -16,7 +16,7 @@ import plotly.express as px
 import streamlit as st
 
 from kpi_monitor.data_loader import DataLoader, HIERARCHY
-from kpi_monitor.anomaly_detector import AnomalyDetector, Anomaly, SEVERITY_COLORS
+from kpi_monitor.anomaly_detector import AnomalyDetector, Anomaly, SEVERITY_COLORS, METHOD_LABELS
 from kpi_monitor.drill_down import DrillDownAnalyzer
 from kpi_monitor.correlation import CorrelationValidator
 
@@ -87,24 +87,68 @@ def get_loader():
 
 
 @st.cache_data(ttl=3600)
-def get_volatility_regime(_loader_id) -> tuple[str, float, float]:
+def get_volatility_regime(_loader_id) -> tuple:
     """
-    Compute Nifty 30-day rolling volatility and map to a sensitivity regime.
-    Returns (label, vol_pct_per_day, zscore_multiplier).
-    Multiplier >1 raises thresholds so market-driven noise doesn't trigger alerts.
+    Combines Nifty 30-day volatility (relative to 90-day baseline) and
+    30-day cumulative return (relative to baseline drift).
+    Returns (combined_label, vol_pct_per_day, zscore_multiplier,
+             dir_label, vol_label, ret_30d_pct).
+    Index 2 is always zscore_multiplier for backward-compatible callers.
     """
     loader = get_loader()
-    mkt = loader.market
+    mkt    = loader.market
     if mkt.empty:
-        return ("Normal", 0.0, 1.0)
-    recent = mkt.sort_values("date").tail(30)["nifty_return"]
-    vol = float(recent.std() * 100)   # daily std as %
-    if vol < 0.8:
-        return ("Normal", vol, 1.0)
-    elif vol < 1.5:
-        return ("Elevated", vol, 1.2)
+        return ("Flat + Calm", 0.0, 1.0, "Flat", "Calm", 0.0)
+
+    mkt     = mkt.sort_values("date")
+    returns = mkt["nifty_return"]
+
+    # Split: recent = last 30 trading days, baseline = prior 90 trading days
+    recent_30   = returns.tail(30)
+    baseline_90 = returns.iloc[-(30 + 90):-30] if len(returns) >= 120 else returns.iloc[:-30]
+    if len(baseline_90) < 10:
+        baseline_90 = returns
+
+    # ── Volatility: ratio of recent vs baseline daily std ──────────────────
+    recent_vol   = float(recent_30.std()   * 100) if len(recent_30)   > 2 else 0.0
+    baseline_vol = float(baseline_90.std() * 100) if len(baseline_90) > 2 else (recent_vol or 1.0)
+    vol_ratio    = recent_vol / baseline_vol if baseline_vol > 0 else 1.0
+
+    if vol_ratio < 1.2:
+        vol_label = "Calm"
+    elif vol_ratio < 1.8:
+        vol_label = "Elevated"
     else:
-        return ("High", vol, 1.4)
+        vol_label = "High"
+
+    # ── Direction: recent 30d cumulative return vs baseline daily drift ─────
+    ret_30d_pct        = float((recent_30 + 1).prod() - 1) * 100   # cumulative %
+    baseline_30d_equiv = float(baseline_90.mean() * 100) * 30       # baseline drift over 30 days
+    divergence         = ret_30d_pct - baseline_30d_equiv            # positive = outpacing baseline
+
+    if divergence > 3.0:
+        dir_label = "Bull"
+    elif divergence < -3.0:
+        dir_label = "Bear"
+    else:
+        dir_label = "Flat"
+
+    # ── Multiplier matrix ───────────────────────────────────────────────────
+    _matrix = {
+        ("Bull", "Calm"):     1.0,
+        ("Bull", "Elevated"): 1.1,
+        ("Bull", "High"):     1.2,
+        ("Flat", "Calm"):     1.0,
+        ("Flat", "Elevated"): 1.2,
+        ("Flat", "High"):     1.4,
+        ("Bear", "Calm"):     1.2,
+        ("Bear", "Elevated"): 1.4,
+        ("Bear", "High"):     1.6,
+    }
+    zscore_multiplier = _matrix[(dir_label, vol_label)]
+    combined_label    = f"{dir_label} + {vol_label}"
+
+    return (combined_label, recent_vol, zscore_multiplier, dir_label, vol_label, ret_30d_pct)
 
 
 @st.cache_data(ttl=300)
@@ -165,6 +209,7 @@ def sidebar():
     pages = [
         "KPI Scorecard",
         "Anomaly Alerts",
+        "Entity Health",
         "Investigate Anomaly",
         "Trend Explorer",
         "About",
@@ -214,17 +259,18 @@ def sidebar():
 # PAGE 1 — KPI Scorecard
 # ─────────────────────────────────────────────────────────────────────────────
 
-_REGIME_STYLE = {
-    "Normal":   ("rgba(44,160,44,0.12)",  "#2ca02c"),
-    "Elevated": ("rgba(255,127,14,0.12)", "#ff7f0e"),
-    "High":     ("rgba(214,39,40,0.12)",  "#d62728"),
-}
+def _regime_style(zscore_multiplier: float) -> tuple[str, str]:
+    if zscore_multiplier >= 1.4:
+        return "rgba(214,39,40,0.12)", "#d62728"
+    if zscore_multiplier > 1.0:
+        return "rgba(255,127,14,0.12)", "#ff7f0e"
+    return "rgba(44,160,44,0.12)", "#2ca02c"
 
 
 def page_scorecard(
     anomalies: list[Anomaly],
     domain_windows: dict | None = None,
-    regime: tuple = ("Normal", 0.0, 1.0),
+    regime: tuple = ("Flat + Calm", 0.0, 1.0, "Flat", "Calm", 0.0),
 ):
     if domain_windows is None:
         domain_windows = {
@@ -274,18 +320,21 @@ def page_scorecard(
     )
 
     # Volatility regime badge
-    reg_label, vol_pct, zs_mult = regime
-    reg_bg, reg_fg = _REGIME_STYLE.get(reg_label, ("rgba(128,128,128,0.12)", "#888"))
+    reg_label, vol_pct, zs_mult, dir_label, vol_label, ret_30d = regime
+    reg_bg, reg_fg = _regime_style(zs_mult)
     thresh_note = (
-        f"Alert thresholds raised +{(zs_mult - 1)*100:.0f}% — market noise filtered"
-        if zs_mult > 1.0 else "Normal alert sensitivity"
+        f"Thresholds raised +{(zs_mult - 1)*100:.0f}% — market noise filtered"
+        if zs_mult > 1.0 else "Standard thresholds"
     )
+    dir_arrow = "↑" if dir_label == "Bull" else "↓" if dir_label == "Bear" else "→"
     st.markdown(
         f'<div style="display:inline-flex;align-items:center;gap:12px;'
         f'background:{reg_bg};border:1px solid {reg_fg};'
         f'border-radius:7px;padding:6px 14px;margin-bottom:4px;font-size:0.80rem">'
-        f'<span style="color:{reg_fg};font-weight:700">● {reg_label} market regime</span>'
-        f'<span style="opacity:0.55">Nifty 30d vol: {vol_pct:.2f}%/day</span>'
+        f'<span style="color:{reg_fg};font-weight:700">● {reg_label}</span>'
+        f'<span style="opacity:0.55">'
+        f'Nifty 30d: {dir_arrow} {ret_30d:+.1f}% return · {vol_pct:.2f}%/day vol'
+        f'</span>'
         f'<span style="opacity:0.55">·</span>'
         f'<span style="color:{reg_fg};opacity:0.85">{thresh_note}</span>'
         f'</div>',
@@ -381,7 +430,7 @@ def page_scorecard(
                 st.markdown(f"""
 <div class="kpi-card {css_cls}">
   <div class="kpi-label">{loader.kpi_display(kpi)}</div>
-  <div class="kpi-value">{_fmt(recent_val, unit)}<span style="font-size:0.65rem;opacity:0.55"> /day avg</span></div>
+  <div class="kpi-value">{_fmt(recent_val, unit)}<span style="font-size:0.65rem;opacity:0.55">{"" if loader.kpi_is_stock(kpi) else " /day avg"}</span></div>
   <div style="display:flex;gap:12px;margin-top:6px">
     <div>
       <div style="font-size:0.68rem;opacity:0.55">vs Baseline ({bw}d)</div>
@@ -496,7 +545,7 @@ def page_anomalies(anomalies: list[Anomaly], domain_windows: dict | None = None)
         )
         dev_col = "#d62728" if is_bad else "#2ca02c"
         sign    = "↓" if anom.deviation_pct < 0 else "↑"
-        method  = anom.detection_method.replace("_", " ").title()
+        method  = METHOD_LABELS.get(anom.detection_method, anom.detection_method)
 
         # ── Option C: left = metadata, right = ranked contributors ───────────
         left, right = st.columns([5, 7])
@@ -583,7 +632,7 @@ def page_anomalies(anomalies: list[Anomaly], domain_windows: dict | None = None)
 def page_investigate(
     anomalies: list[Anomaly],
     domain_windows: dict | None = None,
-    regime: tuple = ("Normal", 0.0, 1.0),
+    regime: tuple = ("Flat + Calm", 0.0, 1.0, "Flat", "Calm", 0.0),
 ):
     st.title("Anomaly Investigation")
     loader = get_loader()
@@ -624,7 +673,7 @@ def page_investigate(
         f"**Domain:** {anom.domain} &nbsp;|&nbsp; "
         f"**Dimension:** {anom.dimension_label()} &nbsp;|&nbsp; "
         f"**Period:** {anom.analysis_start} → {anom.analysis_end} &nbsp;|&nbsp; "
-        f"**Method:** {anom.detection_method.replace('_', ' ')}"
+        f"**Method:** {METHOD_LABELS.get(anom.detection_method, anom.detection_method)}"
     )
     st.info(anom.summary)
     st.divider()
@@ -916,7 +965,380 @@ def _tab_trend(anom: Anomaly, loader: DataLoader):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PAGE 4 — Trend Explorer
+# PAGE 4 — Entity Health
+# ─────────────────────────────────────────────────────────────────────────────
+
+_EH_KPIS = [
+    "brokerage_revenue", "equity_volume", "derivatives_volume", "active_clients",
+    "aum", "sip_inflows", "lumpsum_inflows", "redemptions", "net_flows",
+    "new_accounts", "client_count", "activation_rate",
+]
+_EH_KPI_BY_DOMAIN = {
+    "Broking": ["brokerage_revenue", "equity_volume", "derivatives_volume", "active_clients"],
+    "Wealth":  ["aum", "sip_inflows", "lumpsum_inflows", "redemptions", "net_flows"],
+    "Clients": ["new_accounts", "client_count", "activation_rate"],
+}
+_BADGE_COLORS = {
+    "Critical": "#d62728",
+    "Warning":  "#ff7f0e",
+    "Watch":    "#bcbd22",
+    "Healthy":  "#2ca02c",
+}
+_SEV_ORDER = {"Critical": 0, "Warning": 1, "Watch": 2, "Healthy": 3}
+
+
+@st.cache_data(ttl=300)
+def get_entity_health_data(_loader_id: int, level: str, dw_tuple: tuple) -> dict:
+    """
+    Returns entity_path -> kpi -> {deviation_pct, actual, baseline, direction}.
+    Mean-vs-mean comparison so both flow and stock KPIs are consistent.
+    """
+    loader = get_loader()
+    dw = {d: {"analysis": aw, "baseline": bw} for d, aw, bw in dw_tuple}
+
+    h_idx     = HIERARCHY.index(level)
+    group_cols = HIERARCHY[: h_idx + 1]
+    results: dict[str, dict] = {}
+
+    for kpi in _EH_KPIS:
+        domain = loader.kpi_domain(kpi)
+        aw = dw.get(domain, {}).get("analysis", 14)
+        bw = dw.get(domain, {}).get("baseline", 90)
+
+        df = loader.aggregate(group_by=group_cols)
+        if kpi not in df.columns or df.empty:
+            continue
+
+        end     = df["date"].max()
+        a_start = end - timedelta(days=aw - 1)
+        b_start = end - timedelta(days=bw + aw)
+        b_end   = a_start - timedelta(days=1)
+
+        act  = df[df["date"] >= a_start].groupby(group_cols)[kpi].mean()
+        base = df[(df["date"] >= b_start) & (df["date"] <= b_end)].groupby(group_cols)[kpi].mean()
+
+        for idx in act.index.intersection(base.index):
+            b_val = float(base[idx])
+            a_val = float(act[idx])
+            if b_val == 0:
+                continue
+            dev_pct    = (a_val - b_val) / abs(b_val) * 100
+            entity_key = " › ".join(
+                str(v) for v in (idx if isinstance(idx, tuple) else (idx,))
+            )
+            if entity_key not in results:
+                results[entity_key] = {}
+            results[entity_key][kpi] = {
+                "deviation_pct": round(dev_pct, 1),
+                "actual":        round(a_val, 2),
+                "baseline":      round(b_val, 2),
+                "direction":     loader.kpi_direction(kpi),
+            }
+
+    return results
+
+
+def _dev_severity(dev_pct: float, direction: str) -> str:
+    bad = -dev_pct if direction == "higher_is_better" else dev_pct
+    if bad <= 0:
+        return "Healthy"
+    if bad >= 35:
+        return "Critical"
+    if bad >= 20:
+        return "Warning"
+    if bad >= 10:
+        return "Watch"
+    return "Healthy"
+
+
+def _entity_assessment(kpi_stats: dict, loader) -> str:
+    by_sev: dict[str, list] = {"Critical": [], "Warning": [], "Watch": []}
+    for kpi, info in kpi_stats.items():
+        sev = info.get("severity")
+        if sev in by_sev:
+            by_sev[sev].append((kpi, info["deviation_pct"]))
+
+    if not any(v for v in by_sev.values()):
+        return "All KPIs are within normal range. No concerns detected."
+
+    parts = []
+    if by_sev["Critical"]:
+        worst_kpi, worst_dev = min(by_sev["Critical"], key=lambda x: x[1])
+        domains = sorted({loader.kpi_domain(k) for k, _ in by_sev["Critical"]})
+        n = len(by_sev["Critical"])
+        parts.append(
+            f"<b>{n} KPI{'s' if n > 1 else ''} at Critical level</b> ({', '.join(domains)}). "
+            f"Worst: <b>{loader.kpi_display(worst_kpi)}</b> at {worst_dev:+.1f}% vs baseline."
+        )
+    if by_sev["Warning"]:
+        n = len(by_sev["Warning"])
+        domains = sorted({loader.kpi_domain(k) for k, _ in by_sev["Warning"]})
+        parts.append(
+            f"{n} KPI{'s' if n > 1 else ''} at Warning level ({', '.join(domains)})."
+        )
+    if by_sev["Watch"]:
+        n = len(by_sev["Watch"])
+        parts.append(
+            f"{n} KPI{'s' if n > 1 else ''} under Watch — early signals, monitor closely."
+        )
+    return " ".join(parts)
+
+
+def _eh_render_heatmap(entity_order: list, kpi_order: list, entity_data: dict, loader) -> None:
+    z_vals, text_vals, hover_vals = [], [], []
+
+    for entity in entity_order:
+        row_z, row_t, row_h = [], [], []
+        for kpi in kpi_order:
+            info = entity_data.get(entity, {}).get(kpi)
+            if info is None:
+                row_z.append(None)
+                row_t.append("")
+                row_h.append(f"<b>{entity}</b><br>{loader.kpi_display(kpi)}: N/A")
+                continue
+            dev       = info["deviation_pct"]
+            direction = info["direction"]
+            # Flip lower_is_better so red always = bad outcome
+            display_val = dev if direction == "higher_is_better" else -dev
+            row_z.append(display_val)
+            row_t.append(f"{dev:+.0f}%")
+            row_h.append(
+                f"<b>{entity}</b><br>"
+                f"{loader.kpi_display(kpi)}: {dev:+.1f}%<br>"
+                f"Actual {info['actual']:,.1f} · Baseline {info['baseline']:,.1f}"
+            )
+        z_vals.append(row_z)
+        text_vals.append(row_t)
+        hover_vals.append(row_h)
+
+    fig = go.Figure(go.Heatmap(
+        z=z_vals,
+        x=[loader.kpi_display(k) for k in kpi_order],
+        y=entity_order,
+        colorscale=[
+            [0.00, "#b22222"],
+            [0.25, "#ff7f0e"],
+            [0.42, "#ffe066"],
+            [0.50, "#f5f5f5"],
+            [0.62, "#c7e9c0"],
+            [1.00, "#2ca02c"],
+        ],
+        zmid=0, zmin=-50, zmax=50,
+        text=text_vals,
+        texttemplate="%{text}",
+        textfont={"size": 9},
+        customdata=hover_vals,
+        hovertemplate="%{customdata}<extra></extra>",
+        colorbar=dict(title="vs baseline", ticksuffix="%", thickness=12, len=0.75),
+    ))
+
+    n = len(entity_order)
+    row_h = max(28, min(44, 400 // max(n, 1)))
+    fig.update_layout(
+        height=max(300, row_h * n + 130),
+        margin=dict(t=40, b=20, l=160, r=60),
+        xaxis=dict(side="top", tickangle=-35, tickfont=dict(size=10)),
+        yaxis=dict(autorange="reversed", tickfont=dict(size=10)),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def _eh_render_leaderboard(entity_order: list, entity_meta: dict, loader) -> None:
+    rows = []
+    for rank, entity in enumerate(entity_order, 1):
+        meta      = entity_meta[entity]
+        worst_name = loader.kpi_display(meta["worst_kpi"]) if meta["worst_kpi"] else "—"
+        rows.append({
+            "Rank":      rank,
+            "Entity":    entity,
+            "Health":    meta["badge"],
+            "Critical":  meta["n_crit"]  or "—",
+            "Warning":   meta["n_warn"]  or "—",
+            "Watch":     meta["n_watch"] or "—",
+            "Healthy":   meta["n_ok"],
+            "Worst KPI": worst_name,
+            "Dev %":     f"{meta['worst_dev_pct']:+.1f}%" if meta["worst_kpi"] else "—",
+        })
+
+    df = pd.DataFrame(rows).set_index("Rank")
+    styled = df.style.map(
+        lambda v: f"color: {_BADGE_COLORS.get(v, '#888')}; font-weight: 700",
+        subset=["Health"],
+    )
+    st.dataframe(styled, use_container_width=True)
+
+
+def _eh_render_profile(entity: str, meta: dict, loader) -> None:
+    badge = meta["badge"]
+    color = _BADGE_COLORS.get(badge, "#888")
+    st.markdown(
+        f'<span style="display:inline-block;padding:3px 12px;border-radius:12px;'
+        f'background:{color};color:white;font-weight:700;font-size:0.80rem">{badge}</span>'
+        f'&nbsp;&nbsp;<span style="opacity:0.75">{entity}</span>',
+        unsafe_allow_html=True,
+    )
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Critical", meta["n_crit"])
+    m2.metric("Warning",  meta["n_warn"])
+    m3.metric("Watch",    meta["n_watch"])
+    m4.metric("Healthy",  meta["n_ok"])
+
+    assessment = _entity_assessment(meta["kpi_stats"], loader)
+    st.markdown(
+        f'<div style="background:rgba(128,128,128,0.07);border-radius:8px;'
+        f'padding:12px 16px;margin:8px 0 14px 0;font-size:0.87rem">'
+        f'{assessment}</div>',
+        unsafe_allow_html=True,
+    )
+
+    for domain in ("Broking", "Wealth", "Clients"):
+        domain_kpis = [
+            (k, info)
+            for k, info in meta["kpi_stats"].items()
+            if loader.kpi_domain(k) == domain
+        ]
+        if not domain_kpis:
+            continue
+        st.markdown(f"**{domain}**")
+        # worst first
+        domain_kpis.sort(
+            key=lambda x: (
+                x[1]["deviation_pct"] if x[1]["direction"] == "higher_is_better"
+                else -x[1]["deviation_pct"]
+            )
+        )
+        for kpi, info in domain_kpis:
+            dev   = info["deviation_pct"]
+            sev   = info["severity"]
+            color = _BADGE_COLORS.get(sev, "#2ca02c")
+            bar_w = min(abs(dev) / 50 * 100, 100)
+            sign  = "↓" if dev < 0 else "↑"
+            st.markdown(
+                f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">'
+                f'<div style="width:170px;font-size:0.79rem;opacity:0.85">'
+                f'{loader.kpi_display(kpi)}</div>'
+                f'<div style="flex:1;background:rgba(128,128,128,0.12);border-radius:3px;height:8px">'
+                f'<div style="width:{bar_w:.0f}%;height:8px;background:{color};border-radius:3px">'
+                f'</div></div>'
+                f'<div style="min-width:52px;text-align:right;font-size:0.82rem;'
+                f'font-weight:600;color:{color}">{sign}{abs(dev):.1f}%</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+
+def page_entity_health(anomalies: list[Anomaly], domain_windows: dict | None = None):
+    st.title("Entity Health")
+    st.caption("Holistic KPI performance at Region · Branch · RM level.")
+
+    loader = get_loader()
+    dw = domain_windows or {
+        "Broking": {"analysis": 5,  "baseline": 60},
+        "Wealth":  {"analysis": 14, "baseline": 90},
+        "Clients": {"analysis": 30, "baseline": 180},
+    }
+
+    ctrl1, ctrl2 = st.columns([2, 2])
+    with ctrl1:
+        level_label = st.radio(
+            "Hierarchy level", ["Region", "Branch", "RM"],
+            horizontal=True, key="eh_level",
+        )
+    level_key = {"Region": "region", "Branch": "branch", "RM": "rm_id"}[level_label]
+
+    with ctrl2:
+        if level_label != "RM":
+            view = st.radio("View", ["Heat Map", "Leaderboard"], horizontal=True, key="eh_view")
+        else:
+            view = "Leaderboard"
+            st.caption("Leaderboard view — 48 RMs, heat map not practical at this level")
+
+    dw_tuple = tuple(
+        (domain, v["analysis"], v["baseline"])
+        for domain, v in sorted(dw.items())
+    )
+
+    with st.spinner("Computing entity health…"):
+        entity_data = get_entity_health_data(id(loader), level_key, dw_tuple)
+
+    if not entity_data:
+        st.info("No data available for this level.")
+        return
+
+    # Build per-entity metadata
+    entity_meta: dict[str, dict] = {}
+    for entity, kpi_map in entity_data.items():
+        kpi_stats: dict[str, dict] = {}
+        severities: list[str]      = []
+        worst_kpi:  str | None     = None
+        worst_bad:  float          = 0.0
+        worst_dev_pct: float       = 0.0
+
+        for kpi, info in kpi_map.items():
+            sev = _dev_severity(info["deviation_pct"], info["direction"])
+            kpi_stats[kpi] = {**info, "severity": sev}
+            severities.append(sev)
+            bad = (
+                -info["deviation_pct"] if info["direction"] == "higher_is_better"
+                else info["deviation_pct"]
+            )
+            if bad > worst_bad:
+                worst_bad     = bad
+                worst_kpi     = kpi
+                worst_dev_pct = info["deviation_pct"]
+
+        badge = next(
+            (s for s in ("Critical", "Warning", "Watch") if s in severities),
+            "Healthy",
+        )
+        entity_meta[entity] = {
+            "badge":         badge,
+            "kpi_stats":     kpi_stats,
+            "n_crit":        severities.count("Critical"),
+            "n_warn":        severities.count("Warning"),
+            "n_watch":       severities.count("Watch"),
+            "n_ok":          severities.count("Healthy"),
+            "worst_kpi":     worst_kpi,
+            "worst_bad":     worst_bad,
+            "worst_dev_pct": worst_dev_pct,
+        }
+
+    entity_order = sorted(
+        entity_meta,
+        key=lambda e: (_SEV_ORDER[entity_meta[e]["badge"]], -entity_meta[e]["worst_bad"]),
+    )
+    kpi_order = [
+        k for grp in _EH_KPI_BY_DOMAIN.values() for k in grp
+        if any(k in entity_data[e] for e in entity_data)
+    ]
+
+    if view == "Heat Map":
+        st.subheader(f"KPI Heat Map — {level_label} level")
+        st.caption(
+            "**Red** = below baseline (bad for revenue/clients), **green** = above. "
+            "Redemptions inverted so red = high redemptions = bad."
+        )
+        _eh_render_heatmap(entity_order, kpi_order, entity_data, loader)
+    else:
+        st.subheader(f"Performance Leaderboard — {level_label} level")
+        st.caption("Sorted worst → best by Critical KPI count, then largest deviation.")
+        _eh_render_leaderboard(entity_order, entity_meta, loader)
+
+    st.divider()
+    st.subheader("Entity Deep Dive")
+    selected = st.selectbox(
+        "Select entity to inspect",
+        entity_order,
+        key="eh_selected",
+        format_func=lambda e: f"{e}  [{entity_meta[e]['badge']}]",
+    )
+    if selected:
+        _eh_render_profile(selected, entity_meta[selected], loader)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PAGE 5 — Trend Explorer
 # ─────────────────────────────────────────────────────────────────────────────
 
 def page_trend_explorer():
@@ -1356,6 +1778,8 @@ def main():
         page_scorecard(anomalies, domain_windows, regime)
     elif page == "Anomaly Alerts":
         page_anomalies(anomalies, domain_windows)
+    elif page == "Entity Health":
+        page_entity_health(anomalies, domain_windows)
     elif page == "Investigate Anomaly":
         page_investigate(anomalies, domain_windows, regime)
     elif page == "Trend Explorer":
