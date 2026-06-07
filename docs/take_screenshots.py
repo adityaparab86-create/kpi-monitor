@@ -105,12 +105,6 @@ def run():
         page.screenshot(path=str(OUT_DIR / "09_investigate_anomaly.png"), full_page=False)
         print("  09_investigate_anomaly.png")
 
-        # ── 9. Trend Explorer ────────────────────────────────────────────────
-        nav_to(page, "Trend Explorer")
-        scroll_to(page, 0)
-        page.screenshot(path=str(OUT_DIR / "10_trend_explorer.png"), full_page=False)
-        print("  10_trend_explorer.png")
-
         browser.close()
         print(f"\nAll screenshots saved to: {OUT_DIR}")
 

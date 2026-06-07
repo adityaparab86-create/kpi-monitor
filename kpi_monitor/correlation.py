@@ -35,6 +35,7 @@ class Hypothesis:
 @dataclass
 class CorrelationReport:
     primary_anomaly: Anomaly
+    primary_firm_status: dict | None       # primary KPI checked at firm level (None if anomaly is already firm-level)
     correlate_status: list[dict]          # {kpi, status, deviation_pct, note}
     hypotheses: list[Hypothesis]
     overall_verdict: str
@@ -69,13 +70,22 @@ class CorrelationValidator:
             if nifty_status:
                 correlate_status.append(nifty_status)
 
-        hypotheses = self._generate_hypotheses(anomaly, correlate_status)
+        # Check the primary KPI itself at firm level — only meaningful if the anomaly
+        # is at a sub-firm dimension (region/branch/rm/segment).
+        # A healthy firm-level reading confirms the issue is truly isolated to this
+        # dimension; an anomalous firm-level reading means a broader decline exists.
+        primary_firm_status: dict | None = None
+        if anomaly.dimension_level != "firm":
+            primary_firm_status = self._check_correlate(anomaly.kpi, anomaly, baseline_window)
+
+        hypotheses = self._generate_hypotheses(anomaly, correlate_status, primary_firm_status)
         hypotheses.sort(key=lambda h: -h.confidence)
 
         overall_verdict, confidence = self._overall_verdict(hypotheses)
 
         return CorrelationReport(
             primary_anomaly=anomaly,
+            primary_firm_status=primary_firm_status,
             correlate_status=correlate_status,
             hypotheses=hypotheses,
             overall_verdict=overall_verdict,
@@ -178,6 +188,7 @@ class CorrelationValidator:
         self,
         anomaly: Anomaly,
         correlate_status: list[dict],
+        primary_firm_status: dict | None = None,
     ) -> list[Hypothesis]:
         hypotheses: list[Hypothesis] = []
         direction   = anomaly.direction
@@ -242,6 +253,23 @@ class CorrelationValidator:
                 contradicting_kpis=[],
             ))
 
+        # ── Hypothesis 3b: Primary KPI is also declining at firm level ───────────
+        if primary_firm_status and primary_firm_status.get("anomalous") and is_bad:
+            firm_dev = primary_firm_status["deviation_pct"]
+            hypotheses.append(Hypothesis(
+                hypothesis=f"Firm-wide decline in {anomaly.kpi_name} — this dimension is worst-hit",
+                confidence=0.85,
+                evidence=(
+                    f"{anomaly.kpi_name} is also anomalous at firm level "
+                    f"({firm_dev:+.1f}% vs baseline). "
+                    f"The detected dimension ({anomaly.dimension_label()}) is likely the largest "
+                    f"contributor to a broader firm-wide problem, not an isolated outlier."
+                ),
+                verdict="Genuine Issue",
+                supporting_kpis=[anomaly.kpi],
+                contradicting_kpis=[],
+            ))
+
         # ── Hypothesis 4: Isolated dimension issue vs. firm-wide false alarm ────
         if len(healthy_corrs) >= 2 and len(anomalous_corrs) == 0 and not market_stressed:
             # High z-score → anomaly is real, just confined to this dimension
@@ -251,14 +279,28 @@ class CorrelationValidator:
             is_sub_dim = anomaly.dimension_level not in ("firm",)
 
             if is_sub_dim and high_z:
+                # If primary KPI is also healthy at firm level, we have direct
+                # confirmation that the issue is contained to this dimension.
+                firm_healthy = (
+                    primary_firm_status is not None
+                    and not primary_firm_status.get("anomalous")
+                )
+                firm_note = (
+                    f" {anomaly.kpi_name} is flat at firm level "
+                    f"({primary_firm_status['deviation_pct']:+.1f}%), "
+                    f"confirming the issue is contained to {dim_label}."
+                    if firm_healthy else ""
+                )
+                confidence = 0.90 if firm_healthy else 0.80
                 hypotheses.append(Hypothesis(
                     hypothesis=f"Genuine issue isolated to {dim_label}",
-                    confidence=0.80,
+                    confidence=confidence,
                     evidence=(
                         f"Correlated KPIs are healthy at firm level "
                         f"({', '.join(c['kpi_name'] for c in healthy_corrs[:3])}), "
                         f"but the anomaly ({anomaly.deviation_pct:+.1f}%, z={anomaly.z_score:.2f}) "
                         f"is statistically significant — pointing to a dimension-specific cause."
+                        f"{firm_note}"
                     ),
                     verdict="Genuine Issue",
                     supporting_kpis=[],

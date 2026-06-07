@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+Thumbs.db
+
+# Internal tooling (FleetView / Claude Code)
+.claude/
+
+# Screenshots (binary, large)
+docs/screenshots/
+
+# Old mockup HTML files
+*.html
+
+# Jupyter
+.ipynb_checkpoints/

@@ -209,9 +209,8 @@ def sidebar():
     pages = [
         "KPI Scorecard",
         "Anomaly Alerts",
-        "Entity Health",
         "Investigate Anomaly",
-        "Trend Explorer",
+        "Team Scorecard",
         "About",
     ]
     # Sync the radio to any button-driven navigation BEFORE the widget renders.
@@ -252,6 +251,7 @@ def sidebar():
         "Wealth":  {"analysis": w_aw, "baseline": w_bw},
         "Clients": {"analysis": c_aw, "baseline": c_bw},
     }
+
     return domain_windows
 
 
@@ -801,6 +801,30 @@ def _tab_correlation(anom: Anomaly, loader: DataLoader, baseline_window: int = 9
     )
     st.divider()
 
+    # Primary KPI at firm level — the anchor for interpreting everything else
+    pfs = report.primary_firm_status
+    if pfs:
+        firm_anomalous = pfs.get("anomalous", False)
+        firm_dev       = pfs.get("deviation_pct", 0)
+        if firm_anomalous:
+            firm_icon, firm_bg, firm_msg = (
+                "⚠️", "rgba(214,39,40,0.08)",
+                f"<b>{anom.kpi_name} is also anomalous at firm level</b> ({firm_dev:+.1f}%). "
+                f"This dimension is likely the worst-hit part of a broader decline."
+            )
+        else:
+            firm_icon, firm_bg, firm_msg = (
+                "✓", "rgba(44,160,44,0.08)",
+                f"<b>{anom.kpi_name} is healthy at firm level</b> ({firm_dev:+.1f}%). "
+                f"The drop is contained to {anom.dimension_label()} — not a firm-wide problem."
+            )
+        st.markdown(
+            f'<div style="background:{firm_bg};border-radius:8px;padding:10px 14px;'
+            f'margin-bottom:12px;font-size:0.88rem">'
+            f'{firm_icon} {firm_msg}</div>',
+            unsafe_allow_html=True,
+        )
+
     # Correlate status table
     if report.correlate_status:
         st.markdown("#### Correlated KPI Status")
@@ -965,7 +989,7 @@ def _tab_trend(anom: Anomaly, loader: DataLoader):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PAGE 4 — Entity Health
+# PAGE 4 — Team Scorecard
 # ─────────────────────────────────────────────────────────────────────────────
 
 _EH_KPIS = [
@@ -1229,7 +1253,7 @@ def _eh_render_profile(entity: str, meta: dict, loader) -> None:
 
 
 def page_entity_health(anomalies: list[Anomaly], domain_windows: dict | None = None):
-    st.title("Entity Health")
+    st.title("Team Scorecard")
     st.caption("Holistic KPI performance at Region · Branch · RM level.")
 
     loader = get_loader()
@@ -1337,144 +1361,6 @@ def page_entity_health(anomalies: list[Anomaly], domain_windows: dict | None = N
         _eh_render_profile(selected, entity_meta[selected], loader)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# PAGE 5 — Trend Explorer
-# ─────────────────────────────────────────────────────────────────────────────
-
-def page_trend_explorer():
-    st.title("Trend Explorer")
-    st.caption("Manually explore any KPI with dimension filters and compare periods.")
-
-    loader = get_loader()
-    end_date   = loader.df["date"].max().date()
-
-    tc1, tc2, tc3 = st.columns([2, 2, 2])
-    with tc1:
-        domain_sel = st.selectbox("Domain", ["Broking", "Wealth", "Clients"])
-        kpi_options = loader.domain_kpis(domain_sel)
-        kpi_sel = st.selectbox("KPI", kpi_options,
-                               format_func=loader.kpi_display)
-    with tc2:
-        region_sel  = st.selectbox("Region",  ["All"] + ["North", "South", "East", "West"])
-        branch_opts = (
-            ["All"] + loader.config["dimensions"]["branches"].get(region_sel, [])
-            if region_sel != "All" else ["All"]
-        )
-        branch_sel = st.selectbox("Branch", branch_opts)
-    with tc3:
-        segment_sel = st.selectbox("Segment", ["All", "Retail", "HNI", "Ultra_HNI"])
-        lookback = st.slider("Lookback (days)", 30, 365, 180)
-
-    filters = {}
-    if region_sel  != "All": filters["region"]  = region_sel
-    if branch_sel  != "All": filters["branch"]  = branch_sel
-    if segment_sel != "All": filters["segment"] = segment_sel
-
-    start_date = end_date - timedelta(days=lookback)
-    df = loader.aggregate(date_range=(start_date, end_date), filters=filters)
-
-    if kpi_sel not in df.columns or df.empty:
-        st.warning("No data for the selected filters.")
-        return
-
-    ts_agg = "mean" if kpi_sel in _MEAN_KPIS else "sum"
-    df_ts = df.groupby("date")[kpi_sel].agg(ts_agg).reset_index()
-    df_ts.columns = ["date", "value"]
-    df_ts = df_ts.sort_values("date")
-
-    roll_mean = df_ts["value"].rolling(30, min_periods=5).mean()
-    roll_std  = df_ts["value"].rolling(30, min_periods=5).std()
-
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=pd.concat([df_ts["date"], df_ts["date"][::-1]]),
-        y=pd.concat([roll_mean + 2*roll_std, (roll_mean - 2*roll_std)[::-1]]),
-        fill="toself",
-        fillcolor="rgba(44,160,44,0.08)",
-        line=dict(color="rgba(0,0,0,0)"),
-        name="±2σ band",
-        hoverinfo="skip",
-    ))
-    fig.add_trace(go.Scatter(
-        x=df_ts["date"], y=roll_mean,
-        line=dict(color="#1f77b4", dash="dot", width=1.5),
-        name="30-day MA",
-    ))
-    fig.add_trace(go.Scatter(
-        x=df_ts["date"], y=df_ts["value"],
-        line=dict(color="#2c3e50", width=2),
-        mode="lines",
-        name=loader.kpi_display(kpi_sel),
-    ))
-    fig.update_layout(
-        title=f"{loader.kpi_display(kpi_sel)}",
-        yaxis_title=f"{loader.kpi_display(kpi_sel)} ({loader.kpi_unit(kpi_sel)})",
-        height=420,
-        hovermode="x unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02),
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-    # Period comparison
-    st.subheader("Period comparison")
-    pc1, pc2 = st.columns(2)
-    with pc1:
-        current_n = st.number_input("Current period (days)", 7, 90, 30)
-    with pc2:
-        compare_n = st.number_input("Compare against prior (days)", 7, 90, 30)
-
-    cur_range  = loader.last_n_days(int(current_n))
-    prev_range = loader.prior_n_days(int(compare_n), int(current_n))
-
-    cur_df  = loader.aggregate(date_range=cur_range,  filters=filters)
-    prev_df = loader.aggregate(date_range=prev_range, filters=filters)
-
-    if not cur_df.empty and not prev_df.empty and kpi_sel in cur_df.columns:
-        cur_val  = _period_agg(cur_df,  kpi_sel)
-        prev_val = _period_agg(prev_df, kpi_sel)
-        delta    = (cur_val - prev_val) / abs(prev_val) * 100 if prev_val else 0
-        direction = loader.kpi_direction(kpi_sel)
-        delta_color = (
-            "normal" if (delta > 0 and direction == "higher_is_better")
-                     or (delta < 0 and direction == "lower_is_better")
-            else "inverse"
-        )
-
-        m1, m2, m3 = st.columns(3)
-        m1.metric(f"Current {current_n}d", _fmt(cur_val, loader.kpi_unit(kpi_sel)))
-        m2.metric(f"Prior {compare_n}d",   _fmt(prev_val, loader.kpi_unit(kpi_sel)))
-        m3.metric("Change", f"{delta:+.1f}%", delta_color=delta_color)
-
-    # Breakdown bar
-    if region_sel == "All":
-        breakdown_level = "region"
-    elif branch_sel == "All":
-        breakdown_level = "branch"
-    else:
-        breakdown_level = "segment"
-
-    st.subheader(f"Last {current_n}d breakdown by {breakdown_level.title()}")
-    cur_break = loader.aggregate(
-        group_by=[breakdown_level],
-        date_range=cur_range,
-        filters=filters,
-    )
-    if not cur_break.empty and kpi_sel in cur_break.columns:
-        agg_fn = "mean" if kpi_sel in _MEAN_KPIS else "sum"
-        by_dim = cur_break.groupby(breakdown_level)[kpi_sel].agg(agg_fn).reset_index()
-        by_dim.columns = [breakdown_level, "value"]
-        fig2 = px.pie(
-            by_dim, values="value", names=breakdown_level,
-            title=f"{loader.kpi_display(kpi_sel)} share by {breakdown_level.title()}",
-            height=350,
-        )
-        st.plotly_chart(fig2, use_container_width=True)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# PAGE 5 — About
-# ─────────────────────────────────────────────────────────────────────────────
-
 def page_about():
     st.title("About This System")
     st.markdown("""
@@ -1545,13 +1431,6 @@ The synthetic dataset contains 4 deliberate anomalies for demonstration:
 # KPIs that represent a level/rate — use mean over period, not sum.
 # Sum would count e.g. AUM 14 times (once per trading day).
 _MEAN_KPIS = {"aum", "client_count", "active_clients", "activation_rate"}
-
-
-def _period_agg(df: pd.DataFrame, kpi: str) -> float:
-    """Return the appropriate period aggregate: mean for stock/rate KPIs, sum for flows."""
-    if kpi not in df.columns or df.empty:
-        return 0.0
-    return float(df[kpi].mean() if kpi in _MEAN_KPIS else df[kpi].sum())
 
 
 def _fmt(value: float, unit: str) -> str:
@@ -1778,12 +1657,10 @@ def main():
         page_scorecard(anomalies, domain_windows, regime)
     elif page == "Anomaly Alerts":
         page_anomalies(anomalies, domain_windows)
-    elif page == "Entity Health":
+    elif page == "Team Scorecard":
         page_entity_health(anomalies, domain_windows)
     elif page == "Investigate Anomaly":
         page_investigate(anomalies, domain_windows, regime)
-    elif page == "Trend Explorer":
-        page_trend_explorer()
     elif page == "About":
         page_about()
 
