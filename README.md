@@ -2,6 +2,9 @@
 
 A Streamlit dashboard for daily KPI monitoring, anomaly detection, and hierarchical root-cause analysis across Broking, Wealth, and Client domains.
 
+**Live demo:** [kpi-monitor.onrender.com](https://kpi-monitor.onrender.com)  
+**Source:** [github.com/adityaparab86-create/kpi-monitor](https://github.com/adityaparab86-create/kpi-monitor)
+
 ---
 
 ## Quick Start
@@ -24,16 +27,23 @@ streamlit run app.py
 
 ```
 KPI monitoring/
-├── app.py                       # Streamlit dashboard (6 pages)
+├── app.py                       # Streamlit dashboard (5 pages)
 ├── generate_data.py             # Synthetic data generator (replace with real pipeline)
 ├── kpi_config.yaml              # KPI registry: thresholds, targets, correlates
 ├── requirements.txt
+├── render.yaml                  # Render deployment config (infrastructure-as-code)
+├── .gitignore
+├── .streamlit/
+│   └── config.toml              # Theme (light) and server settings
 ├── kpi_monitor/
 │   ├── data_loader.py           # DataLoader class — aggregation & helpers
 │   ├── anomaly_detector.py      # Z-score + target breach + trend reversal detection
 │   ├── drill_down.py            # Hierarchical decomposition Firm→Region→Branch→RM
 │   └── correlation.py           # Cross-KPI validation & hypothesis ranking
 └── docs/
+    ├── FUTURE_IMPROVEMENTS.md   # Planned enhancements not yet built
+    ├── tour_mockup.py           # Quick Tour sidebar panel mockup (port 8502)
+    ├── history_mockup.py        # Anomaly History & Trend Tracking mockup (port 8503)
     ├── screenshots/             # Page screenshots (auto-generated)
     └── take_screenshots.py      # Playwright screenshot script
 ```
@@ -95,6 +105,19 @@ Three complementary methods run for every KPI × dimension combination:
 
 Only **negative** anomalies are detected (drops for higher-is-better, rises for lower-is-better).
 
+### Hierarchy levels scanned
+
+Detection runs across: **Firm → Region → Branch → RM** by default.  
+The **Segment** level (RM × Segment = 144 combinations) is excluded from default scans — it produces granular noise rather than actionable signals. Pass `levels=[..., "segment"]` explicitly to `detect_all()` to include it.
+
+### Performance
+
+Anomaly detection completes in **~430 ms** for the full default scan (12 KPIs × 4 levels). Key optimisations applied:
+
+- **Pre-aggregate once per level** — `detect_all()` builds one DataFrame per hierarchy level before the KPI loop, reducing `groupby` calls from 60 to 5.
+- **Groupby split instead of boolean mask loop** — `df.groupby(group_cols, sort=False)` replaces per-entity boolean filtering inside `_detect_for_level`.
+- **No defensive copy** — `DataLoader.aggregate()` works on the raw reference; filtering already produces a new object.
+
 ### Volatility-adaptive thresholds
 
 `get_volatility_regime()` compares Nifty 30-day rolling volatility against a 90-day baseline and measures the 30-day cumulative return vs baseline drift. The resulting **market regime badge** (shown on the Scorecard header) scales all detection thresholds:
@@ -155,7 +178,17 @@ Detection method labels:
 - `target breach`
 - `trend reversal in last 7 days`
 
-### 3. Entity Health *(Holistic View)*
+### 3. Investigate Anomaly
+
+![Investigate Anomaly](docs/screenshots/09_investigate_anomaly.png)
+
+Select any anomaly from the top dropdown (or arrive via Investigate → button). Three tabs:
+
+- **Drill-Down** — waterfall / bar chart decomposing contribution at the next hierarchy level; ranks sub-entities by share of the gap
+- **Cross-KPI Validation** — validates whether correlated KPIs moved in the same direction; a firm-level context banner shows whether the primary KPI is healthy or anomalous firm-wide; ranks hypotheses (e.g. *"market-driven: Nifty also fell"* vs *"idiosyncratic: only this KPI affected"*)
+- **Historical Trend** — historical time-series with 30-day rolling band (mean ± 2σ) to show where the anomaly sits in long-run context
+
+### 4. Team Scorecard *(Holistic View)*
 
 **Region Heat Map**
 ![Entity Heat Map Region](docs/screenshots/04_entity_heatmap_region.png)
@@ -192,29 +225,13 @@ Three views controlled by **Hierarchy level** (Region / Branch / RM) and **View*
 - Plain-English assessment: e.g. *"1 KPI at Critical level (Wealth). Worst: Redemptions at +103.5% vs baseline."*
 - Horizontal KPI bars grouped by domain, colour-coded by severity, sorted worst first
 
-Severity thresholds for Entity Health (deviation-only, no z-score):
+Severity thresholds for Team Scorecard (deviation-only, no z-score):
 - Critical: `|bad_dev| ≥ 35%`
 - Warning: `|bad_dev| ≥ 20%`
 - Watch: `|bad_dev| ≥ 10%`
 - Healthy: below all thresholds
 
-### 4. Investigate Anomaly
-
-![Investigate Anomaly](docs/screenshots/09_investigate_anomaly.png)
-
-Select any anomaly from the top dropdown (or arrive via Investigate → button). Three tabs:
-
-- **Drill Down** — waterfall / bar chart decomposing contribution at the next hierarchy level; ranks sub-entities by share of the gap
-- **Correlations** — validates whether correlated KPIs moved in the same direction; ranks hypotheses (e.g. *"market-driven: Nifty also fell"* vs *"idiosyncratic: only this KPI affected"*)
-- **Trend** — historical time-series with 30-day rolling band (mean ± 2σ) to show where the anomaly sits in long-run context
-
-### 5. Trend Explorer
-
-![Trend Explorer](docs/screenshots/10_trend_explorer.png)
-
-Manual KPI explorer. Filter by Domain → KPI → Region → Branch → Segment with arbitrary lookback window. Overlays rolling mean and ±2σ band. Period comparison tab compares any two custom windows.
-
-### 6. About
+### 5. About
 
 System architecture overview, injected demo anomalies, and detection methodology explanation.
 
@@ -248,7 +265,7 @@ kpi_name:
   stock_metric: true          # optional — suppresses /day avg label on cards
   zscore_threshold: 2.0       # detection fires when |z| > threshold × multiplier
   target_breach_pct: 15       # detection fires when dev% > this × multiplier
-  correlates:                 # KPIs to validate against in correlation tab
+  correlates:                 # KPIs to validate against in Cross-KPI Validation tab
     - other_kpi
 ```
 
@@ -256,7 +273,7 @@ kpi_name:
 
 1. Add entry to `kpi_config.yaml`
 2. Add to `MONITORABLE_KPIS` list in `kpi_monitor/anomaly_detector.py`
-3. Add to `_EH_KPIS` and `_EH_KPI_BY_DOMAIN` in `app.py` if it should appear in Entity Health
+3. Add to `_EH_KPIS` and `_EH_KPI_BY_DOMAIN` in `app.py` if it should appear in Team Scorecard
 4. Re-generate data or wire to real data source
 
 ---
@@ -287,6 +304,21 @@ Prefers deepest hierarchy level and largest absolute business impact so the card
 
 ---
 
+## Deployment
+
+The app is deployed on **Render** (free tier) via `render.yaml`:
+
+| | |
+|---|---|
+| **Live URL** | https://kpi-monitor.onrender.com |
+| **GitHub repo** | https://github.com/adityaparab86-create/kpi-monitor |
+| **Runtime** | Python 3.11, Render Oregon region |
+| **Start command** | `streamlit run app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true` |
+
+> **Note:** Render free-tier instances spin down after 15 minutes of inactivity. The first request after sleep may take 30–60 seconds to cold-start.
+
+---
+
 ## Reproducing Screenshots
 
 ```bash
@@ -296,3 +328,12 @@ python3 docs/take_screenshots.py
 ```
 
 Screenshots saved to `docs/screenshots/`.
+
+---
+
+## Future Improvements
+
+Planned enhancements are tracked in [`docs/FUTURE_IMPROVEMENTS.md`](docs/FUTURE_IMPROVEMENTS.md):
+
+1. **Pre-computed KPI Aggregates** — pre-aggregate at all hierarchy levels on data load to cut runtime further
+2. **Anomaly History & Trend Tracking** — persistent anomaly log with duration, first-seen date, weekly deviation chart, and firing streak heatmap (mockup: `docs/history_mockup.py`)
