@@ -69,7 +69,7 @@ class DataLoader:
         filters: dict | None = None,
     ) -> pd.DataFrame:
         """Return a time-series DataFrame aggregated to the requested dimensions."""
-        df = self.df.copy()
+        df = self.df  # no copy — filtering produces new objects anyway
 
         if date_range:
             df = df[

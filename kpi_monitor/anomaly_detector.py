@@ -82,14 +82,28 @@ class AnomalyDetector:
         zscore_multiplier scales all thresholds — >1.0 reduces sensitivity in volatile markets.
         Returns anomalies sorted by severity (Critical first).
         """
-        detect_levels    = levels or (["firm"] + HIERARCHY)
-        kpis_to_detect   = kpi_list if kpi_list is not None else MONITORABLE_KPIS
+        # Segment is the finest grain (RM × segment = 144 combinations) and
+        # produces granular noise rather than actionable signals. Exclude by default;
+        # callers can pass levels=[...,"segment"] explicitly to include it.
+        default_levels = ["firm"] + [l for l in HIERARCHY if l != "segment"]
+        detect_levels  = levels or default_levels
+        kpis_to_detect = kpi_list if kpi_list is not None else MONITORABLE_KPIS
         anomalies: list[Anomaly] = []
 
-        end_date = self.loader.df["date"].max().date()
+        end_date       = self.loader.df["date"].max().date()
         analysis_start = end_date - timedelta(days=analysis_window - 1)
         baseline_start = end_date - timedelta(days=baseline_window + analysis_window)
         baseline_end   = analysis_start - timedelta(days=1)
+
+        # Pre-aggregate once per level — avoids repeating df.copy()+groupby for
+        # every (kpi, level) pair (was 60 calls; now 5).
+        level_dfs: dict[str, pd.DataFrame] = {}
+        for level in detect_levels:
+            if level == "firm":
+                level_dfs[level] = self.loader.firm_daily()
+            else:
+                idx = HIERARCHY.index(level)
+                level_dfs[level] = self.loader.aggregate(group_by=HIERARCHY[: idx + 1])
 
         for kpi in kpis_to_detect:
             for level in detect_levels:
@@ -99,6 +113,7 @@ class AnomalyDetector:
                         analysis_start, end_date,
                         baseline_start, baseline_end,
                         zscore_multiplier=zscore_multiplier,
+                        df_agg=level_dfs[level],
                     )
                 )
 
@@ -145,36 +160,35 @@ class AnomalyDetector:
         baseline_start: date,
         baseline_end: date,
         zscore_multiplier: float = 1.0,
+        df_agg: pd.DataFrame | None = None,
     ) -> list[Anomaly]:
-        if level == "firm":
-            df_agg = self.loader.firm_daily()
-            group_cols: list[str] = []
+        if df_agg is None:
+            # Fallback for callers that don't pass a pre-aggregated df
+            if level == "firm":
+                df_agg = self.loader.firm_daily()
+                group_cols: list[str] = []
+            else:
+                idx = HIERARCHY.index(level)
+                group_cols = HIERARCHY[: idx + 1]
+                df_agg = self.loader.aggregate(group_by=group_cols)
         else:
-            idx = HIERARCHY.index(level)
-            group_cols = HIERARCHY[: idx + 1]
-            df_agg = self.loader.aggregate(group_by=group_cols)
+            group_cols = [] if level == "firm" else HIERARCHY[: HIERARCHY.index(level) + 1]
 
         if kpi not in df_agg.columns:
             return []
 
         anomalies = []
-        dimension_groups = (
-            [{}] if level == "firm"
-            else [
-                dict(zip(group_cols, vals))
-                for vals in df_agg[group_cols].drop_duplicates().values
+
+        # Use groupby split — one pass instead of a boolean mask per dimension.
+        if level == "firm":
+            groups: list[tuple[dict, pd.DataFrame]] = [({}, df_agg)]
+        else:
+            groups = [
+                (dict(zip(group_cols, key if isinstance(key, tuple) else (key,))), grp)
+                for key, grp in df_agg.groupby(group_cols, sort=False)
             ]
-        )
 
-        for dim_vals in dimension_groups:
-            if dim_vals:
-                mask = pd.Series([True] * len(df_agg))
-                for col, val in dim_vals.items():
-                    mask &= df_agg[col] == val
-                slice_df = df_agg[mask].copy()
-            else:
-                slice_df = df_agg.copy()
-
+        for dim_vals, slice_df in groups:
             slice_df = slice_df.sort_values("date")
             series = slice_df.set_index("date")[kpi]
 
