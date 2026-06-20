@@ -1697,25 +1697,34 @@ def _build_kpi_context(anomalies: list, domain: str, domain_windows: dict | None
             df = loader.firm_daily(date_range=(start_dt, end_dt))
             available = [k for k in all_firm_kpis if k in df.columns]
             if available:
-                # Week-over-week summary — pre-computed so Claude doesn't need to derive it
+                # Per-KPI summary: short-term trend AND baseline deviation side by side
+                # so Claude cannot confuse "recovering within window" with "above baseline"
+                anomaly_map = {a.kpi: a for a in filtered if getattr(a, "dimension_level", "firm") in ("firm", "all", "")}
                 first_row = df.iloc[0]
                 last_row  = df.iloc[-1]
-                improved, declined = [], []
+                lines.append(f"\n### KPI status summary (analysis window: {analysis_days} days):")
+                lines.append(f"{'KPI':<30} | {'vs baseline':>12} | {'window trend':>13} | Status")
+                lines.append(f"{'-'*30}-|-{'-'*12}-|-{'-'*13}-|--------")
                 for k in available:
-                    if first_row[k] == 0:
-                        continue
-                    chg = (last_row[k] - first_row[k]) / abs(first_row[k]) * 100
+                    anom = anomaly_map.get(k)
+                    vs_baseline = f"{anom.deviation_pct:+.1f}% ({anom.severity})" if anom else "within baseline"
+                    if first_row[k] != 0:
+                        trend_chg = (last_row[k] - first_row[k]) / abs(first_row[k]) * 100
+                        trend_str = f"{trend_chg:+.1f}% in window"
+                    else:
+                        trend_str = "n/a"
                     direction = loader.kpi_direction(k)
-                    is_good = (chg > 0 and direction == "higher_is_better") or \
-                              (chg < 0 and direction == "lower_is_better")
-                    entry = f"{loader.kpi_display(k)} ({chg:+.1f}%)"
-                    (improved if is_good else declined).append(entry)
+                    if anom:
+                        status = anom.severity + " anomaly"
+                    elif first_row[k] != 0:
+                        is_good = (trend_chg > 0 and direction == "higher_is_better") or \
+                                  (trend_chg < 0 and direction == "lower_is_better")
+                        status = "improving" if is_good else "declining"
+                    else:
+                        status = "stable"
+                    lines.append(f"{loader.kpi_display(k):<30} | {vs_baseline:>12} | {trend_str:>13} | {status}")
 
-                lines.append("\n### Week-to-date change (first vs last day of window):")
-                lines.append("Improved:  " + (", ".join(improved)  if improved  else "none"))
-                lines.append("Declined:  " + (", ".join(declined)  if declined  else "none"))
-
-                lines.append("\n### Last 7 days — daily values (firm-wide):")
+                lines.append(f"\n### Daily values — last {analysis_days} days (firm-wide):")
                 lines.append("Date       | " + " | ".join(loader.kpi_display(k) for k in available))
                 lines.append("-----------|" + "|".join("---------" for _ in available))
                 for _, row in df.iterrows():
