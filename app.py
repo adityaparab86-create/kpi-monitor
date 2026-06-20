@@ -1642,8 +1642,9 @@ def _build_kpi_context(anomalies: list, domain: str, domain_windows: dict | None
     """Format pre-computed anomalies + trends as context for the system prompt."""
     today = date.today().isoformat()
     dw = domain_windows or {}
-    # Use the dashboard's configured analysis window; fall back to 7 days
-    analysis_days = dw.get(domain if domain != "All" else "Broking", {}).get("analysis", 7)
+    _ref_domain = domain if domain != "All" else "Broking"
+    analysis_days = dw.get(_ref_domain, {}).get("analysis", 7)
+    baseline_days = dw.get(_ref_domain, {}).get("baseline", 90)
     filtered = [
         a for a in anomalies
         if domain == "All" or getattr(a, "domain", None) == domain
@@ -1697,34 +1698,51 @@ def _build_kpi_context(anomalies: list, domain: str, domain_windows: dict | None
             df = loader.firm_daily(date_range=(start_dt, end_dt))
             available = [k for k in all_firm_kpis if k in df.columns]
             if available:
-                # Per-KPI summary: short-term trend AND baseline deviation side by side
-                # so Claude cannot confuse "recovering within window" with "above baseline"
+                # Compute actual baseline deviation for ALL KPIs using the same
+                # analysis vs baseline windows as the KPI scorecard dashboard
+                b_start, b_end = loader.prior_n_days(baseline_days)
+                df_baseline = loader.firm_daily(date_range=(b_start, b_end))
+
                 anomaly_map = {a.kpi: a for a in filtered if getattr(a, "dimension_level", "firm") in ("firm", "all", "")}
                 first_row = df.iloc[0]
                 last_row  = df.iloc[-1]
-                lines.append(f"\n### KPI status summary (analysis window: {analysis_days} days):")
-                lines.append(f"{'KPI':<30} | {'vs baseline':>12} | {'window trend':>13} | Status")
-                lines.append(f"{'-'*30}-|-{'-'*12}-|-{'-'*13}-|--------")
+
+                lines.append(
+                    f"\n### KPI status — analysis {analysis_days}d vs baseline {baseline_days}d "
+                    f"(matches KPI Scorecard):"
+                )
+                lines.append(f"{'KPI':<30} | {'vs baseline':>15} | {'window trend':>13} | Status")
+                lines.append(f"{'-'*30}-|-{'-'*15}-|-{'-'*13}-|--------")
                 for k in available:
                     anom = anomaly_map.get(k)
-                    vs_baseline = f"{anom.deviation_pct:+.1f}% ({anom.severity})" if anom else "within baseline"
+                    # Always compute deviation directly — don't rely on anomaly threshold
+                    if k in df_baseline.columns and df_baseline[k].mean() != 0:
+                        analysis_mean  = df[k].mean()
+                        baseline_mean  = df_baseline[k].mean()
+                        dev_pct = (analysis_mean - baseline_mean) / abs(baseline_mean) * 100
+                        severity_tag = f" ({anom.severity})" if anom else ""
+                        vs_baseline = f"{dev_pct:+.1f}%{severity_tag}"
+                    else:
+                        vs_baseline = "n/a"
+                        dev_pct = 0.0
+
                     if first_row[k] != 0:
                         trend_chg = (last_row[k] - first_row[k]) / abs(first_row[k]) * 100
-                        trend_str = f"{trend_chg:+.1f}% in window"
+                        trend_str = f"{trend_chg:+.1f}% in {analysis_days}d"
                     else:
                         trend_str = "n/a"
+                        trend_chg = 0.0
+
                     direction = loader.kpi_direction(k)
                     if anom:
                         status = anom.severity + " anomaly"
-                    elif first_row[k] != 0:
-                        is_good = (trend_chg > 0 and direction == "higher_is_better") or \
-                                  (trend_chg < 0 and direction == "lower_is_better")
-                        status = "improving" if is_good else "declining"
                     else:
-                        status = "stable"
-                    lines.append(f"{loader.kpi_display(k):<30} | {vs_baseline:>12} | {trend_str:>13} | {status}")
+                        is_bad = (dev_pct < 0 and direction == "higher_is_better") or \
+                                 (dev_pct > 0 and direction == "lower_is_better")
+                        status = "below baseline" if is_bad else "above baseline" if abs(dev_pct) > 2 else "on track"
+                    lines.append(f"{loader.kpi_display(k):<30} | {vs_baseline:>15} | {trend_str:>13} | {status}")
 
-                lines.append(f"\n### Daily values — last {analysis_days} days (firm-wide):")
+                lines.append(f"\n### Daily values — analysis window ({analysis_days} days, firm-wide):")
                 lines.append("Date       | " + " | ".join(loader.kpi_display(k) for k in available))
                 lines.append("-----------|" + "|".join("---------" for _ in available))
                 for _, row in df.iterrows():
