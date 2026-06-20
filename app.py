@@ -9,11 +9,18 @@ import sys
 from datetime import date, timedelta
 from pathlib import Path
 
+import time as _time
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 import streamlit as st
+
+try:
+    import anthropic as _anthropic
+    _ANTHROPIC_AVAILABLE = True
+except ImportError:
+    _ANTHROPIC_AVAILABLE = False
 
 from kpi_monitor.data_loader import DataLoader, HIERARCHY
 from kpi_monitor.anomaly_detector import AnomalyDetector, Anomaly, SEVERITY_COLORS, METHOD_LABELS
@@ -206,11 +213,20 @@ def sidebar():
     except Exception:
         pass
 
+    if st.sidebar.button("💬 Ask Claude", key="ask_claude_btn", use_container_width=True, type="primary"):
+        st.session_state.page = "Ask Claude"
+        st.session_state.nav_radio = "Ask Claude"
+        st.session_state._nav_source = "button"
+        st.rerun()
+
+    st.sidebar.divider()
+
     pages = [
         "KPI Scorecard",
         "Anomaly Alerts",
         "Investigate Anomaly",
         "Team Scorecard",
+        "Ask Claude",
         "About",
     ]
     # Sync the radio to any button-driven navigation BEFORE the widget renders.
@@ -1618,6 +1634,282 @@ def get_alert_breakdown(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# PAGE 5 — Ask Claude (KPI Intelligence chat)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _build_kpi_context(anomalies: list, domain: str) -> str:
+    """Format pre-computed anomalies as a compact context block for the system prompt."""
+    today = date.today().isoformat()
+    filtered = [
+        a for a in anomalies
+        if domain == "All" or getattr(a, "domain", None) == domain
+    ]
+
+    lines = [f"## Live KPI Snapshot — {today}"]
+
+    if filtered:
+        lines.append(f"\n### Anomalies detected ({len(filtered)} total, ranked by severity):")
+        for a in filtered[:15]:  # cap to avoid token bloat
+            dim = a.dimension_label()
+            dim_str = f" [{dim}]" if dim and dim.lower() not in ("all", "firm") else ""
+            lines.append(
+                f"- **{a.kpi_name}**{dim_str} ({a.domain}): "
+                f"{a.deviation_pct:+.1f}% vs baseline — {a.severity}"
+            )
+    else:
+        lines.append("\n### No anomalies detected in current window.")
+
+    lines.append(
+        "\nUse this snapshot to answer questions directly where possible. "
+        "Only call tools if the user asks for detail not covered above "
+        "(e.g. daily trends, regional breakdowns, specific dates)."
+    )
+    return "\n".join(lines)
+
+
+_CHAT_MODEL   = "claude-haiku-4-5"
+_CHAT_BETA    = "mcp-client-2025-04-04"
+_CHAT_MAX_TOK = 8096
+
+_SUGGESTED_QUESTIONS = {
+    "All": [
+        "What's wrong today?",
+        "Why are net flows down?",
+        "Which KPIs improved this week?",
+    ],
+    "Broking": [
+        "Why is equity volume down?",
+        "How is brokerage revenue trending this month?",
+        "Which branches are underperforming on Broking KPIs?",
+    ],
+    "Wealth": [
+        "Why are net flows negative?",
+        "Is AUM growing or declining?",
+        "Which regions have the highest redemption rate?",
+    ],
+    "Clients": [
+        "Why is the activation rate low?",
+        "Which regions are opening the most new accounts?",
+        "How is client acquisition trending vs baseline?",
+    ],
+}
+
+_DOMAIN_ADDENDUM = {
+    "Broking": "\nFocus this session on Broking KPIs: equity volume, derivatives volume, brokerage revenue, active clients.",
+    "Wealth":  "\nFocus this session on Wealth KPIs: AUM, net flows, redemption rate, SIP book.",
+    "Clients": "\nFocus this session on Client KPIs: new accounts, activation rate, churn rate.",
+}
+
+_CHAT_SYSTEM = (
+    "You are a senior BI analyst at a broking and wealth management firm. "
+    "You have access to live KPI data via tools. When the user asks about KPI performance, "
+    "anomalies, or trends, always call the relevant tools to ground your answer in actual data. "
+    "Keep responses concise and business-focused. Use INR crores for currency where relevant.\n\n"
+    "IMPORTANT: Use a maximum of 3 tool calls per response. "
+    "Retrieve the most relevant data first, then give your best answer immediately — "
+    "do not chain further tool calls to investigate correlations or chase root causes. "
+    "If you cannot fully explain the cause in 3 calls, state what the data shows and "
+    "note what additional investigation would be needed."
+)
+
+
+def _get_anthropic_client():
+    return _anthropic.Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
+
+
+def _mcp_reachable(mcp_url: str) -> bool:
+    """Quick health check — cached in session state for the lifetime of the browser tab."""
+    if "mcp_reachable" in st.session_state:
+        return st.session_state.mcp_reachable
+    try:
+        import urllib.request
+        health_url = mcp_url.replace("/mcp", "/health")
+        urllib.request.urlopen(health_url, timeout=3)
+        reachable = True
+    except Exception:
+        reachable = False
+    st.session_state.mcp_reachable = reachable
+    return reachable
+
+
+def page_ask_claude(anomalies: list | None = None):
+    st.title("Ask Claude")
+    st.caption("Chat with Claude over your live KPI data via MCP.")
+
+    if not _ANTHROPIC_AVAILABLE:
+        st.error("The `anthropic` package is not installed. Run `pip install anthropic` and restart.")
+        return
+
+    try:
+        mcp_url = st.secrets.get("MCP_SERVER_URL", "")
+        if not mcp_url:
+            st.warning(
+                "MCP_SERVER_URL secret not set. Add it in Render dashboard "
+                "or `.streamlit/secrets.toml` for local dev."
+            )
+            return
+    except Exception:
+        st.warning("Secrets not configured. Set ANTHROPIC_API_KEY and MCP_SERVER_URL.")
+        return
+
+    # Domain filter
+    domain = st.radio(
+        "Domain focus",
+        ["All", "Broking", "Wealth", "Clients"],
+        horizontal=True,
+        key="chat_domain",
+    )
+
+    # Suggested questions — update with domain
+    st.markdown("**Suggested questions**")
+    sq_cols = st.columns(3)
+    for i, (col, q) in enumerate(zip(sq_cols, _SUGGESTED_QUESTIONS.get(domain, _SUGGESTED_QUESTIONS["All"]))):
+        with col:
+            if st.button(q, key=f"chat_sq_{domain}_{i}", use_container_width=True):
+                st.session_state.chat_pending = q
+
+    st.divider()
+
+    # Session state
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
+    if "chat_pending" not in st.session_state:
+        st.session_state.chat_pending = None
+
+    # Display history
+    for msg in st.session_state.chat_history:
+        with st.chat_message(msg["role"]):
+            if msg.get("tools"):
+                pills = " &nbsp; ".join(
+                    f'<span style="font-size:11px;padding:2px 10px;border-radius:20px;'
+                    f'background:rgba(128,128,128,0.1);border:1px solid rgba(128,128,128,0.2)">'
+                    f'⚙ {t}</span>'
+                    for t in msg["tools"]
+                )
+                st.markdown(
+                    f'<div style="margin-bottom:6px">{pills}</div>',
+                    unsafe_allow_html=True,
+                )
+            st.markdown(msg["content"])
+
+    user_input = st.chat_input("Ask about any KPI, region, or anomaly…", key="chat_input")
+    if st.session_state.chat_pending:
+        user_input = st.session_state.chat_pending
+        st.session_state.chat_pending = None
+
+    if user_input:
+        st.session_state.chat_history.append({"role": "user", "content": user_input})
+        with st.chat_message("user"):
+            st.markdown(user_input)
+
+        kpi_context   = _build_kpi_context(anomalies or [], domain)
+        _using_mcp    = bool(mcp_url) and _mcp_reachable(mcp_url)
+        no_tools_note = (
+            "\n\nNote: Live tool access is unavailable in this session. "
+            "Answer using only the KPI snapshot above — do not attempt to call any tools."
+            if not _using_mcp else ""
+        )
+        system_prompt = _CHAT_SYSTEM + _DOMAIN_ADDENDUM.get(domain, "") + "\n\n" + kpi_context + no_tools_note
+        api_messages  = [
+            {"role": m["role"], "content": m["content"]}
+            for m in st.session_state.chat_history
+        ]
+
+        with st.chat_message("assistant"):
+            spinner_slot = st.empty()
+            tools_slot   = st.empty()
+            text_slot    = st.empty()
+
+            tool_names  = []
+            reply_parts = []
+            start       = _time.time()
+
+            def _pill_html(names):
+                pills = " &nbsp; ".join(
+                    f'<span style="font-size:11px;padding:2px 10px;border-radius:20px;'
+                    f'background:rgba(128,128,128,0.1);border:1px solid rgba(128,128,128,0.2)">'
+                    f'⚙ {t}</span>'
+                    for t in names
+                )
+                return f'<div style="margin-bottom:6px">{pills}</div>'
+
+            def _stream_call(with_mcp: bool):
+                kwargs = dict(
+                    model=_CHAT_MODEL,
+                    max_tokens=_CHAT_MAX_TOK,
+                    system=system_prompt,
+                    messages=api_messages,
+                )
+                if with_mcp:
+                    kwargs["extra_headers"] = {"anthropic-beta": _CHAT_BETA}
+                    kwargs["extra_body"] = {"mcp_servers": [{"type": "url", "url": mcp_url, "name": "kpi-monitor"}]}
+                return client.messages.stream(**kwargs)
+
+            def _run_stream(stream):
+                for event in stream:
+                    if event.type == "content_block_start":
+                        block = getattr(event, "content_block", None)
+                        if block and getattr(block, "type", None) == "tool_use":
+                            tool_names.append(block.name)
+                            tools_slot.markdown(_pill_html(tool_names), unsafe_allow_html=True)
+                    elif event.type == "content_block_delta":
+                        delta = getattr(event, "delta", None)
+                        if delta and getattr(delta, "type", None) == "text_delta":
+                            reply_parts.append(delta.text)
+                            text_slot.markdown("".join(reply_parts) + "▌")
+
+            try:
+                client = _get_anthropic_client()
+                with spinner_slot.status("Thinking…", expanded=False):
+                    with _stream_call(with_mcp=_using_mcp) as stream:
+                        _run_stream(stream)
+
+                reply = "".join(reply_parts).strip()
+                if not reply:
+                    final = stream.get_final_message()
+                    reply = " ".join(
+                        b.text for b in final.content if b.type == "text"
+                    ).strip() or "_No text returned._"
+
+            except Exception as exc:
+                err_str = str(exc).lower()
+                if _using_mcp and "connection" in err_str:
+                    tool_names = []
+                    reply_parts = []
+                    try:
+                        with spinner_slot.status("MCP unavailable — answering from context…", expanded=False):
+                            with _stream_call(with_mcp=False) as stream:
+                                _run_stream(stream)
+                        reply = "".join(reply_parts).strip() or "_No text returned._"
+                    except Exception as exc2:
+                        reply = f"⚠ Error: `{exc2}`"
+                else:
+                    tool_names = []
+                    reply = f"⚠ Error: `{exc}`"
+
+            elapsed = int(_time.time() - start)
+            spinner_slot.empty()
+            if tool_names:
+                tools_slot.markdown(_pill_html(tool_names), unsafe_allow_html=True)
+            else:
+                tools_slot.empty()
+            text_slot.markdown(reply)
+            st.caption(f"_{elapsed}s_")
+
+        st.session_state.chat_history.append({
+            "role": "assistant",
+            "content": reply,
+            "tools": tool_names,
+        })
+
+    with st.sidebar:
+        if st.button("Clear conversation", key="chat_clear"):
+            st.session_state.chat_history = []
+            st.session_state.pop("mcp_reachable", None)
+            st.rerun()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -1661,6 +1953,8 @@ def main():
         page_entity_health(anomalies, domain_windows)
     elif page == "Investigate Anomaly":
         page_investigate(anomalies, domain_windows, regime)
+    elif page == "Ask Claude":
+        page_ask_claude(anomalies)
     elif page == "About":
         page_about()
 

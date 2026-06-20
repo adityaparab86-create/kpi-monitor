@@ -9,3 +9,18 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: MCP_SERVER_URL
+        value: https://kpi-monitor-mcp.onrender.com/mcp
+
+  - type: web
+    name: kpi-monitor-mcp
+    env: python
+    region: oregon
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn mcp_server_sse:starlette_app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
