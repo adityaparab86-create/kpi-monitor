@@ -1705,32 +1705,35 @@ def _build_kpi_context(anomalies: list, domain: str, domain_windows: dict | None
                 lines.append(f"{'-'*30}-|-{'-'*15}-|-{'-'*12}-|-{'-'*12}-|-{'-'*12}-|--------")
 
                 for k in available:
-                    # Use each KPI's own domain windows — same as the scorecard
-                    kpi_domain = loader.kpi_domain(k)
-                    kpi_aw = dw.get(kpi_domain, {}).get("analysis", analysis_days)
-                    kpi_bw = dw.get(kpi_domain, {}).get("baseline", baseline_days)
+                    # Use each KPI's own domain windows — identical to page_scorecard()
+                    kpi_dom = loader.kpi_domain(k)
+                    kpi_aw  = dw.get(kpi_dom, {}).get("analysis", analysis_days)
+                    kpi_bw  = dw.get(kpi_dom, {}).get("baseline", baseline_days)
+                    unit    = loader.kpi_unit(k)
 
                     a_start, a_end = loader.last_n_days(kpi_aw)
-                    b_start, b_end = loader.prior_n_days(kpi_bw)
+                    # Critical fix: baseline must exclude the analysis window (offset=kpi_aw)
+                    b_start, b_end = loader.prior_n_days(kpi_bw, kpi_aw)
 
                     df_a = loader.firm_daily(date_range=(a_start, a_end))
                     df_b = loader.firm_daily(date_range=(b_start, b_end))
 
                     anom = anomaly_map.get(k)
                     if k in df_a.columns and k in df_b.columns and df_b[k].mean() != 0:
-                        a_mean = df_a[k].mean()
-                        b_mean = df_b[k].mean()
+                        a_mean  = df_a[k].mean()
+                        b_mean  = df_b[k].mean()
                         dev_pct = (a_mean - b_mean) / abs(b_mean) * 100
                         severity_tag = f" ({anom.severity})" if anom else ""
-                        vs_baseline = f"{dev_pct:+.1f}%{severity_tag}"
-                        a_mean_str = f"{a_mean:,.1f}"
-                        b_mean_str = f"{b_mean:,.1f}"
+                        vs_baseline  = f"{dev_pct:+.1f}%{severity_tag}"
+                        # Format using same units as the scorecard (_fmt logic)
+                        a_mean_str = _fmt(a_mean, unit)
+                        b_mean_str = _fmt(b_mean, unit)
                     else:
-                        dev_pct, a_mean, b_mean = 0.0, 0.0, 0.0
+                        dev_pct = 0.0
                         vs_baseline, a_mean_str, b_mean_str = "n/a", "n/a", "n/a"
 
                     window_str = f"{kpi_aw}d/{kpi_bw}d"
-                    direction = loader.kpi_direction(k)
+                    direction  = loader.kpi_direction(k)
                     if anom:
                         status = anom.severity + " anomaly"
                     else:
