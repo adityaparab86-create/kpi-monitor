@@ -12,7 +12,7 @@ services:
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: MCP_SERVER_URL
-        value: https://kpi-monitor-mcp.onrender.com/mcp
+        value: https://kpi-monitor-mcp-6etk.onrender.com/mcp
 
   - type: web
     name: kpi-monitor-mcp
