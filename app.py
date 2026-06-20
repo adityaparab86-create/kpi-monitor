@@ -1638,15 +1638,25 @@ def get_alert_breakdown(
 # PAGE 5 — Ask Claude (KPI Intelligence chat)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _build_kpi_context(anomalies: list, domain: str) -> str:
-    """Format pre-computed anomalies + 7-day trends as context for the system prompt."""
+def _build_kpi_context(anomalies: list, domain: str, domain_windows: dict | None = None) -> str:
+    """Format pre-computed anomalies + trends as context for the system prompt."""
     today = date.today().isoformat()
+    dw = domain_windows or {}
+    # Use the dashboard's configured analysis window; fall back to 7 days
+    analysis_days = dw.get(domain if domain != "All" else "Broking", {}).get("analysis", 7)
     filtered = [
         a for a in anomalies
         if domain == "All" or getattr(a, "domain", None) == domain
     ]
 
-    lines = [f"## Live KPI Snapshot — {today}"]
+    lines = [f"## Live KPI Snapshot — {today} (analysis window: {analysis_days} days)"]
+
+    try:
+        loader = get_loader()
+        targets = loader.config.get("targets", {})
+    except Exception:
+        loader = None
+        targets = {}
 
     if not filtered:
         lines.append("\n### No anomalies detected in current window.")
@@ -1655,15 +1665,22 @@ def _build_kpi_context(anomalies: list, domain: str) -> str:
         for a in filtered[:15]:
             dim = a.dimension_label()
             dim_str = f" [{dim}]" if dim and dim.lower() not in ("all", "firm") else ""
+            t = targets.get(a.kpi, {})
+            target_str = ""
+            if t.get("monthly_growth_pct") is not None:
+                target_str = f", target: {t['monthly_growth_pct']:+.0f}% monthly growth"
             lines.append(
                 f"- **{a.kpi_name}**{dim_str} ({a.domain}): "
                 f"{a.deviation_pct:+.1f}% vs baseline — {a.severity} "
-                f"(actual {a.actual_value:.1f}, expected {a.expected_value:.1f})"
+                f"(actual {a.actual_value:.1f}, expected {a.expected_value:.1f}{target_str})"
             )
 
+    if loader is None:
+        lines.append("\nAnswer using anomaly data above.")
+        return "\n".join(lines)
+
     try:
-        loader = get_loader()
-        start_dt, end_dt = loader.last_n_days(7)
+        start_dt, end_dt = loader.last_n_days(analysis_days)
 
         # Firm-level 7-day trend: all domain KPIs + correlates of anomalous ones
         domain_kpis = (
@@ -1733,7 +1750,7 @@ def _build_kpi_context(anomalies: list, domain: str) -> str:
                         .reset_index()
                         .sort_values("region")
                     )
-                    lines.append(f"\n### Regional breakdown — 7-day avg (all {domain} KPIs):")
+                    lines.append(f"\n### Regional breakdown — {analysis_days}-day avg (all {domain} KPIs):")
                     lines.append("Region     | " + " | ".join(loader.kpi_display(k) for k in reg_available))
                     lines.append("-----------|" + "|".join("---------" for _ in reg_available))
                     for _, row in region_agg.iterrows():
@@ -1741,6 +1758,26 @@ def _build_kpi_context(anomalies: list, domain: str) -> str:
                         lines.append(f"{str(row['region']):<10} | {vals}")
             except Exception:
                 pass
+
+        # Targets summary
+        if targets and domain_kpis:
+            target_lines = []
+            for k in domain_kpis:
+                t = targets.get(k, {})
+                if not t:
+                    continue
+                parts = []
+                if t.get("monthly_growth_pct") is not None:
+                    parts.append(f"monthly growth target: {t['monthly_growth_pct']:+.0f}%")
+                for key in ("annual_target_lakhs", "annual_target_count", "annual_target_pct"):
+                    if t.get(key) is not None:
+                        label = key.replace("annual_target_", "annual target (")  + ")"
+                        parts.append(f"{label}: {t[key]:,.0f}")
+                if parts:
+                    target_lines.append(f"- {loader.kpi_display(k)}: {'; '.join(parts)}")
+            if target_lines:
+                lines.append("\n### KPI targets (from leadership plan):")
+                lines.extend(target_lines)
 
     except Exception:
         pass  # enrichment is best-effort; anomaly list still useful
@@ -1824,7 +1861,7 @@ def _mcp_reachable(mcp_url: str) -> bool:
     return reachable
 
 
-def page_ask_claude(anomalies: list | None = None):
+def page_ask_claude(anomalies: list | None = None, domain_windows: dict | None = None):
     st.title("Ask Claude")
     st.caption("Chat with Claude over your live KPI data via MCP.")
 
@@ -1887,7 +1924,7 @@ def page_ask_claude(anomalies: list | None = None):
         with st.chat_message("user"):
             st.markdown(user_input)
 
-        kpi_context   = _build_kpi_context(anomalies or [], domain)
+        kpi_context   = _build_kpi_context(anomalies or [], domain, domain_windows)
         _using_mcp    = bool(mcp_url) and _mcp_reachable(mcp_url)
         no_tools_note = (
             "\n\nNote: Live tool access is unavailable in this session. "
@@ -2039,7 +2076,7 @@ def main():
     elif page == "Investigate Anomaly":
         page_investigate(anomalies, domain_windows, regime)
     elif page == "Ask Claude":
-        page_ask_claude(anomalies)
+        page_ask_claude(anomalies, domain_windows)
     elif page == "About":
         page_about()
 
