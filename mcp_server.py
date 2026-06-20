@@ -179,9 +179,11 @@ async def list_tools() -> list[types.Tool]:
         types.Tool(
             name="get_kpi_summary",
             description=(
-                "Get a statistical summary for one or more KPIs: recent average, "
-                "baseline average, deviation %, trend direction, and metadata. "
-                "Useful for quick performance checks without running full anomaly detection."
+                "Get a statistical summary for one or more KPIs in a SINGLE call: recent "
+                "average, baseline average, deviation %, trend direction, and metadata. "
+                "PREFER this over multiple get_kpi_data calls when asked how a segment or "
+                "region is doing 'across all KPIs' — pass `filters` (e.g. "
+                "{\"segment\": \"HNI\"}) to summarise every KPI for that slice at once."
             ),
             inputSchema={
                 "type": "object",
@@ -191,6 +193,15 @@ async def list_tools() -> list[types.Tool]:
                         "items": {"type": "string"},
                         "description": (
                             "KPI keys to summarise. If omitted, returns summary for all firm KPIs."
+                        ),
+                    },
+                    "filters": {
+                        "type": "object",
+                        "description": (
+                            "Optional dimension filter to scope the summary to a slice, e.g. "
+                            "{\"segment\": \"HNI\"}, {\"region\": \"South\"}, {\"branch\": \"...\"}. "
+                            "Returns all requested KPIs for that slice in one call. Valid keys: "
+                            "region, branch, rm_id, segment."
                         ),
                     },
                     "recent_days": {
@@ -369,12 +380,20 @@ def _tool_get_kpi_summary(args: dict) -> dict:
     kpis         = args.get("kpis") or loader.firm_kpis()
     recent_days  = int(args.get("recent_days", 14))
     baseline_days = int(args.get("baseline_days", 90))
+    filters      = args.get("filters") or {}
 
     recent_range   = loader.last_n_days(recent_days)
     baseline_range = loader.prior_n_days(baseline_days, offset=recent_days)
 
-    df_recent   = loader.firm_daily(date_range=recent_range)
-    df_baseline = loader.firm_daily(date_range=baseline_range)
+    # When a filter is supplied (e.g. {"segment": "HNI"} or {"region": "South"}),
+    # summarise that slice across ALL requested KPIs in a single call — avoids
+    # fanning out into one get_kpi_data call per KPI.
+    if filters:
+        df_recent   = loader.aggregate(date_range=recent_range,   filters=filters)
+        df_baseline = loader.aggregate(date_range=baseline_range, filters=filters)
+    else:
+        df_recent   = loader.firm_daily(date_range=recent_range)
+        df_baseline = loader.firm_daily(date_range=baseline_range)
 
     summaries = []
     for kpi in kpis:
@@ -413,6 +432,8 @@ def _tool_get_kpi_summary(args: dict) -> dict:
     return {
         "recent_window": f"Last {recent_days} days ({recent_range[0]} → {recent_range[1]})",
         "baseline_window": f"Prior {baseline_days} days ({baseline_range[0]} → {baseline_range[1]})",
+        "filters": filters,
+        "scope": "firm-wide" if not filters else ", ".join(f"{k}={v}" for k, v in filters.items()),
         "kpi_count": len(summaries),
         "summaries": summaries,
     }
