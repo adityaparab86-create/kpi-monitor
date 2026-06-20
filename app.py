@@ -1774,6 +1774,35 @@ def _build_kpi_context(anomalies: list, domain: str, domain_windows: dict | None
                     vals = " | ".join(f"{row[k]:>9.1f}" for k in available)
                     lines.append(f"{row['date'].date()} | {vals}")
 
+                # Weekly trend — last 12 weeks so week-over-week questions are
+                # answerable from context even when MCP/tools are unavailable.
+                # Values are the daily-average within each week (same basis as the
+                # status table), formatted in display units.
+                try:
+                    wk_weeks = 12
+                    wk_start, wk_end = loader.last_n_days(wk_weeks * 7)
+                    df_wk = loader.firm_daily(date_range=(wk_start, wk_end)).copy()
+                    df_wk["date"] = pd.to_datetime(df_wk["date"])
+                    weekly = (
+                        df_wk.set_index("date")[available]
+                        .resample("W-SUN")
+                        .mean()
+                        .dropna(how="all")
+                    )
+                    if not weekly.empty:
+                        units = [loader.kpi_unit(k) for k in available]
+                        lines.append(
+                            f"\n### Weekly trend — last {len(weekly)} weeks "
+                            "(week-ending Sun; daily-avg within week, display units):"
+                        )
+                        lines.append("Week ending | " + " | ".join(loader.kpi_display(k) for k in available))
+                        lines.append("------------|" + "|".join("---------" for _ in available))
+                        for idx, row in weekly.iterrows():
+                            vals = " | ".join(_fmt(row[k], u) for k, u in zip(available, units))
+                            lines.append(f"{idx.date()} | {vals}")
+                except Exception:
+                    pass
+
         # Market returns — always include for "is it market-driven?" questions
         mkt = loader.market
         if not mkt.empty:
@@ -1844,8 +1873,9 @@ def _build_kpi_context(anomalies: list, domain: str, domain_windows: dict | None
         "KPI's own analysis/baseline windows). Always mention the windows used "
         "(e.g. 'over the 5-day window vs the 60-day baseline'). The daily-values and "
         "regional tables are raw recent figures for trend context only — do not derive "
-        "vs-baseline percentages from them. Only call tools for branch-level or RM-level "
-        "breakdowns not shown above."
+        "vs-baseline percentages from them. For week-over-week or multi-week trend "
+        "questions, use the 'Weekly trend' table (last 12 weeks). Only call tools for "
+        "branch-level or RM-level breakdowns, or history older than 12 weeks."
     )
     return "\n".join(lines)
 
