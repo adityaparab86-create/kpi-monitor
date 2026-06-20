@@ -5,6 +5,7 @@ Run: streamlit run app.py
 
 from __future__ import annotations
 
+import os
 import sys
 from datetime import date, timedelta
 from pathlib import Path
@@ -1713,8 +1714,15 @@ _CHAT_SYSTEM = (
 )
 
 
+def _get_secret(key: str, default: str = "") -> str:
+    try:
+        return st.secrets.get(key, "") or os.environ.get(key, default)
+    except Exception:
+        return os.environ.get(key, default)
+
+
 def _get_anthropic_client():
-    return _anthropic.Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
+    return _anthropic.Anthropic(api_key=_get_secret("ANTHROPIC_API_KEY"))
 
 
 def _mcp_reachable(mcp_url: str) -> bool:
@@ -1740,16 +1748,9 @@ def page_ask_claude(anomalies: list | None = None):
         st.error("The `anthropic` package is not installed. Run `pip install anthropic` and restart.")
         return
 
-    try:
-        mcp_url = st.secrets.get("MCP_SERVER_URL", "")
-        if not mcp_url:
-            st.warning(
-                "MCP_SERVER_URL secret not set. Add it in Render dashboard "
-                "or `.streamlit/secrets.toml` for local dev."
-            )
-            return
-    except Exception:
-        st.warning("Secrets not configured. Set ANTHROPIC_API_KEY and MCP_SERVER_URL.")
+    mcp_url = _get_secret("MCP_SERVER_URL")
+    if not _get_secret("ANTHROPIC_API_KEY"):
+        st.warning("ANTHROPIC_API_KEY not set. Add it in the Render dashboard environment variables.")
         return
 
     # Domain filter
