@@ -1639,7 +1639,7 @@ def get_alert_breakdown(
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _build_kpi_context(anomalies: list, domain: str) -> str:
-    """Format pre-computed anomalies as a compact context block for the system prompt."""
+    """Format pre-computed anomalies + 7-day trends as context for the system prompt."""
     today = date.today().isoformat()
     filtered = [
         a for a in anomalies
@@ -1648,22 +1648,43 @@ def _build_kpi_context(anomalies: list, domain: str) -> str:
 
     lines = [f"## Live KPI Snapshot — {today}"]
 
-    if filtered:
+    if not filtered:
+        lines.append("\n### No anomalies detected in current window.")
+    else:
         lines.append(f"\n### Anomalies detected ({len(filtered)} total, ranked by severity):")
-        for a in filtered[:15]:  # cap to avoid token bloat
+        for a in filtered[:15]:
             dim = a.dimension_label()
             dim_str = f" [{dim}]" if dim and dim.lower() not in ("all", "firm") else ""
             lines.append(
                 f"- **{a.kpi_name}**{dim_str} ({a.domain}): "
-                f"{a.deviation_pct:+.1f}% vs baseline — {a.severity}"
+                f"{a.deviation_pct:+.1f}% vs baseline — {a.severity} "
+                f"(actual {a.actual_value:.1f}, expected {a.expected_value:.1f})"
             )
-    else:
-        lines.append("\n### No anomalies detected in current window.")
+
+        # 7-day daily trend for the top anomalous KPIs (firm-level only, no token bloat)
+        try:
+            loader = get_loader()
+            top_kpis = list(dict.fromkeys(
+                a.kpi for a in filtered[:8]
+                if getattr(a, "dimension_level", "firm") in ("firm", "all", "")
+            ))
+            if top_kpis:
+                start_dt, end_dt = loader.last_n_days(7)
+                df = loader.firm_daily(date_range=(start_dt, end_dt))
+                available = [k for k in top_kpis if k in df.columns]
+                if available:
+                    lines.append("\n### Last 7 days — daily values (firm-wide):")
+                    lines.append("Date       | " + " | ".join(loader.kpi_display(k) for k in available))
+                    lines.append("-----------|" + "|".join("---------" for _ in available))
+                    for _, row in df.iterrows():
+                        vals = " | ".join(f"{row[k]:>9.1f}" for k in available)
+                        lines.append(f"{row['date'].date()} | {vals}")
+        except Exception:
+            pass  # trend enrichment is best-effort; anomaly list still useful
 
     lines.append(
-        "\nUse this snapshot to answer questions directly where possible. "
-        "Only call tools if the user asks for detail not covered above "
-        "(e.g. daily trends, regional breakdowns, specific dates)."
+        "\nAnswer using this data directly. Only call tools if the user asks for "
+        "regional breakdowns or KPIs not listed above."
     )
     return "\n".join(lines)
 
