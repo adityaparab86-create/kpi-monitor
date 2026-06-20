@@ -290,6 +290,11 @@ def _tool_detect_anomalies(args: dict) -> dict:
     }
 
 
+# Cap rows returned to the model so a fine-grained query can't blow the
+# context window (segment/RM breakdowns can be tens of thousands of daily rows).
+_MAX_DATA_ROWS = 400
+
+
 def _tool_get_kpi_data(args: dict) -> dict:
     kpi      = args["kpi"]
     days     = int(args.get("days", 30))
@@ -303,16 +308,42 @@ def _tool_get_kpi_data(args: dict) -> dict:
         df = loader.firm_daily(date_range=date_range)
         cols = ["date", kpi]
     else:
-        idx = HIERARCHY.index(group_by)
-        gb  = HIERARCHY[: idx + 1]
-        df  = loader.aggregate(group_by=gb, date_range=date_range, filters=filters)
-        cols = ["date"] + gb + [kpi]
+        # Group by ONLY the requested dimension (not the full hierarchy path),
+        # so "by segment" returns a clean per-segment rollup. Use `filters` to
+        # scope to a parent first (e.g. filters={"region": "South"}, group_by="branch").
+        df   = loader.aggregate(group_by=[group_by], date_range=date_range, filters=filters)
+        cols = ["date", group_by, kpi]
 
     if kpi not in df.columns:
         return {"error": f"KPI '{kpi}' not found in data. Valid KPIs: {list(loader.kpis.keys())}"}
 
     df = df[cols].sort_values("date")
-    df["date"] = df["date"].astype(str)
+
+    # If the daily breakdown is too large, collapse the date axis to a
+    # period-average per dimension value — bounded and still answers
+    # "which segment / region / branch is worst" questions.
+    note = None
+    aggregated = False
+    if len(df) > _MAX_DATA_ROWS and group_by != "firm":
+        agg_fn = "mean" if kpi == "activation_rate" else "mean"
+        df = (
+            df.groupby(group_by, as_index=False)[kpi].agg(agg_fn)
+              .sort_values(kpi, ascending=False)
+        )
+        df.insert(0, "period", f"{date_range[0]} to {date_range[1]} (daily avg)")
+        aggregated = True
+        note = (
+            f"Daily breakdown exceeded {_MAX_DATA_ROWS} rows; returning the "
+            f"per-{group_by} daily-average over the period instead."
+        )
+
+    # Final safety cap even after aggregation (e.g. very many RMs)
+    truncated = len(df) > _MAX_DATA_ROWS
+    if truncated:
+        df = df.head(_MAX_DATA_ROWS)
+
+    if "date" in df.columns:
+        df["date"] = df["date"].astype(str)
 
     kpi_meta = loader.kpis.get(kpi, {})
     return {
@@ -324,6 +355,10 @@ def _tool_get_kpi_data(args: dict) -> dict:
         "date_range": {"from": str(date_range[0]), "to": str(date_range[1])},
         "group_by": group_by,
         "filters": filters,
+        "aggregated_over_period": aggregated,
+        "row_count": len(df),
+        "truncated": truncated,
+        "note": note,
         "rows": df.to_dict(orient="records"),
     }
 
