@@ -1717,36 +1717,28 @@ def _build_kpi_context(anomalies: list, domain: str) -> str:
                 for _, row in mkt_recent.iterrows():
                     lines.append(f"- {row['date'].date()}: {row['nifty_return']:+.2f}%")
 
-        # Regional breakdown for top regional anomalies
-        regional = [
-            a for a in filtered[:10]
-            if getattr(a, "dimension_level", "firm") not in ("firm", "all", "")
-        ]
-        seen_regions: set = set()
-        for a in regional[:4]:  # cap at 4 regions to avoid token bloat
-            region_key = f"{a.kpi}|{a.dimension_level}|{a.dimension_label()}"
-            if region_key in seen_regions:
-                continue
-            seen_regions.add(region_key)
+        # Regional summary — all domain KPIs aggregated by region over the window
+        # Answers "which region is highest/lowest?" without tool calls
+        if domain_kpis:
             try:
-                region_kpis = list(dict.fromkeys([a.kpi] + loader.kpi_correlates(a.kpi)))
-                filters = {a.dimension_level: a.dimension_label()}
-                df_r = loader.aggregate(
-                    group_by=[a.dimension_level],
+                df_region = loader.aggregate(
+                    group_by=["region"],
                     date_range=(start_dt, end_dt),
-                    filters=filters,
                 )
-                available_r = [k for k in region_kpis if k in df_r.columns]
-                if available_r:
-                    lines.append(
-                        f"\n### Last 7 days — {a.dimension_label()} "
-                        f"({a.dimension_level}, incl. correlates):"
+                reg_available = [k for k in domain_kpis if k in df_region.columns]
+                if reg_available and "region" in df_region.columns:
+                    region_agg = (
+                        df_region.groupby("region")[reg_available]
+                        .mean()
+                        .reset_index()
+                        .sort_values("region")
                     )
-                    lines.append("Date       | " + " | ".join(loader.kpi_display(k) for k in available_r))
-                    lines.append("-----------|" + "|".join("---------" for _ in available_r))
-                    for _, row in df_r.iterrows():
-                        vals = " | ".join(f"{row[k]:>9.1f}" for k in available_r)
-                        lines.append(f"{row['date'].date()} | {vals}")
+                    lines.append(f"\n### Regional breakdown — 7-day avg (all {domain} KPIs):")
+                    lines.append("Region     | " + " | ".join(loader.kpi_display(k) for k in reg_available))
+                    lines.append("-----------|" + "|".join("---------" for _ in reg_available))
+                    for _, row in region_agg.iterrows():
+                        vals = " | ".join(f"{row[k]:>9.1f}" for k in reg_available)
+                        lines.append(f"{str(row['region']):<10} | {vals}")
             except Exception:
                 pass
 
@@ -1755,7 +1747,7 @@ def _build_kpi_context(anomalies: list, domain: str) -> str:
 
     lines.append(
         "\nAnswer using this data directly. Only call tools if the user asks for "
-        "regional breakdowns or KPIs not listed above."
+        "branch-level or RM-level breakdowns not shown above."
     )
     return "\n".join(lines)
 
