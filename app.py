@@ -1650,7 +1650,18 @@ def _build_kpi_context(anomalies: list, domain: str, domain_windows: dict | None
         if domain == "All" or getattr(a, "domain", None) == domain
     ]
 
-    lines = [f"## Live KPI Snapshot — {today} (analysis window: {analysis_days} days)"]
+    # Describe the windows in use (per-domain when domain == "All")
+    if domain != "All":
+        win_desc = f"analysis {analysis_days}d / baseline {baseline_days}d"
+    else:
+        _parts = []
+        for d in ("Broking", "Wealth", "Clients"):
+            wd = dw.get(d, {})
+            if wd:
+                _parts.append(f"{d} {wd.get('analysis', '?')}d/{wd.get('baseline', '?')}d")
+        win_desc = "; ".join(_parts) if _parts else "per-domain windows"
+
+    lines = [f"## Live KPI Snapshot — {today}  (windows — {win_desc})"]
 
     try:
         loader = get_loader()
@@ -1662,7 +1673,10 @@ def _build_kpi_context(anomalies: list, domain: str, domain_windows: dict | None
     if not filtered:
         lines.append("\n### No anomalies detected in current window.")
     else:
-        lines.append(f"\n### Anomalies detected ({len(filtered)} total, ranked by severity):")
+        lines.append(
+            f"\n### Anomalies detected ({len(filtered)} total, ranked by severity) "
+            "— values at the flagged dimension:"
+        )
         for a in filtered[:15]:
             dim = a.dimension_label()
             dim_str = f" [{dim}]" if dim and dim.lower() not in ("all", "firm") else ""
@@ -1670,10 +1684,11 @@ def _build_kpi_context(anomalies: list, domain: str, domain_windows: dict | None
             target_str = ""
             if t.get("monthly_growth_pct") is not None:
                 target_str = f", target: {t['monthly_growth_pct']:+.0f}% monthly growth"
+            unit = getattr(a, "unit", "")
             lines.append(
                 f"- **{a.kpi_name}**{dim_str} ({a.domain}): "
                 f"{a.deviation_pct:+.1f}% vs baseline — {a.severity} "
-                f"(actual {a.actual_value:.1f}, expected {a.expected_value:.1f}{target_str})"
+                f"(actual {_fmt(a.actual_value, unit)}, expected {_fmt(a.expected_value, unit)}{target_str})"
             )
 
     if loader is None:
@@ -1736,16 +1751,23 @@ def _build_kpi_context(anomalies: list, domain: str, domain_windows: dict | None
                     direction  = loader.kpi_direction(k)
                     if anom:
                         status = anom.severity + " anomaly"
+                    elif abs(dev_pct) <= 2:
+                        status = "on track"
                     else:
+                        # Direction-aware: for lower_is_better KPIs a rise is bad.
+                        # Use "worse/better vs baseline" so the label never contradicts the sign.
                         is_bad = (dev_pct < 0 and direction == "higher_is_better") or \
                                  (dev_pct > 0 and direction == "lower_is_better")
-                        status = "below baseline" if is_bad else "above baseline" if abs(dev_pct) > 2 else "on track"
+                        status = "worse vs baseline" if is_bad else "better vs baseline"
                     lines.append(
                         f"{loader.kpi_display(k):<30} | {vs_baseline:>15} | "
                         f"{a_mean_str:>12} | {b_mean_str:>12} | {window_str:>12} | {status}"
                     )
 
-                lines.append(f"\n### Daily values — firm-wide (each KPI uses its domain window):")
+                lines.append(
+                    f"\n### Daily values — last {analysis_days} days, firm-wide "
+                    "(raw daily totals; for vs-baseline use the KPI status table above):"
+                )
                 lines.append("Date       | " + " | ".join(loader.kpi_display(k) for k in available))
                 lines.append("-----------|" + "|".join("---------" for _ in available))
                 for _, row in df.iterrows():
@@ -1760,7 +1782,7 @@ def _build_kpi_context(anomalies: list, domain: str, domain_windows: dict | None
                 (mkt["date"] <= pd.Timestamp(end_dt))
             ].copy()
             if not mkt_recent.empty:
-                lines.append("\n### Nifty daily returns (last 7 days):")
+                lines.append(f"\n### Nifty daily returns (last {analysis_days} days):")
                 for _, row in mkt_recent.iterrows():
                     lines.append(f"- {row['date'].date()}: {row['nifty_return']:+.2f}%")
 
@@ -1780,7 +1802,11 @@ def _build_kpi_context(anomalies: list, domain: str, domain_windows: dict | None
                         .reset_index()
                         .sort_values("region")
                     )
-                    lines.append(f"\n### Regional breakdown — {analysis_days}-day avg (all {domain} KPIs):")
+                    _reg_scope = "all domains" if domain == "All" else domain
+                    lines.append(
+                        f"\n### Regional breakdown — {analysis_days}-day daily avg, raw figures "
+                        f"({_reg_scope} KPIs):"
+                    )
                     lines.append("Region     | " + " | ".join(loader.kpi_display(k) for k in reg_available))
                     lines.append("-----------|" + "|".join("---------" for _ in reg_available))
                     for _, row in region_agg.iterrows():
@@ -1813,8 +1839,13 @@ def _build_kpi_context(anomalies: list, domain: str, domain_windows: dict | None
         pass  # enrichment is best-effort; anomaly list still useful
 
     lines.append(
-        "\nAnswer using this data directly. Only call tools if the user asks for "
-        "branch-level or RM-level breakdowns not shown above."
+        "\nIMPORTANT — when stating how a KPI is performing vs baseline, ALWAYS cite the "
+        "'KPI status' table (it matches the KPI Scorecard dashboard exactly, using each "
+        "KPI's own analysis/baseline windows). Always mention the windows used "
+        "(e.g. 'over the 5-day window vs the 60-day baseline'). The daily-values and "
+        "regional tables are raw recent figures for trend context only — do not derive "
+        "vs-baseline percentages from them. Only call tools for branch-level or RM-level "
+        "breakdowns not shown above."
     )
     return "\n".join(lines)
 
