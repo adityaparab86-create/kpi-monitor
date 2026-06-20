@@ -1668,7 +1668,7 @@ def _build_kpi_context(anomalies: list, domain: str) -> str:
         # Firm-level 7-day trend: all domain KPIs + correlates of anomalous ones
         domain_kpis = (
             loader.domain_kpis(domain) if domain != "All"
-            else [a.kpi for a in filtered[:8] if getattr(a, "dimension_level", "firm") in ("firm", "all", "")]
+            else loader.domain_kpis("Broking") + loader.domain_kpis("Wealth") + loader.domain_kpis("Clients")
         )
         correlate_kpis = []
         for a in filtered[:8]:
@@ -1680,7 +1680,25 @@ def _build_kpi_context(anomalies: list, domain: str) -> str:
             df = loader.firm_daily(date_range=(start_dt, end_dt))
             available = [k for k in all_firm_kpis if k in df.columns]
             if available:
-                lines.append("\n### Last 7 days — daily values (firm-wide, incl. correlates):")
+                # Week-over-week summary — pre-computed so Claude doesn't need to derive it
+                first_row = df.iloc[0]
+                last_row  = df.iloc[-1]
+                improved, declined = [], []
+                for k in available:
+                    if first_row[k] == 0:
+                        continue
+                    chg = (last_row[k] - first_row[k]) / abs(first_row[k]) * 100
+                    direction = loader.kpi_direction(k)
+                    is_good = (chg > 0 and direction == "higher_is_better") or \
+                              (chg < 0 and direction == "lower_is_better")
+                    entry = f"{loader.kpi_display(k)} ({chg:+.1f}%)"
+                    (improved if is_good else declined).append(entry)
+
+                lines.append("\n### Week-to-date change (first vs last day of window):")
+                lines.append("Improved:  " + (", ".join(improved)  if improved  else "none"))
+                lines.append("Declined:  " + (", ".join(declined)  if declined  else "none"))
+
+                lines.append("\n### Last 7 days — daily values (firm-wide):")
                 lines.append("Date       | " + " | ".join(loader.kpi_display(k) for k in available))
                 lines.append("-----------|" + "|".join("---------" for _ in available))
                 for _, row in df.iterrows():
