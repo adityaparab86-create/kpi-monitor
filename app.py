@@ -2045,17 +2045,35 @@ def page_ask_claude(anomalies: list | None = None, domain_windows: dict | None =
                 )
                 return f'<div style="margin-bottom:6px">{pills}</div>'
 
-            def _stream_call(with_mcp: bool):
+            def _stream_call(with_mcp: bool, msgs: list):
                 kwargs = dict(
                     model=_CHAT_MODEL,
                     max_tokens=_CHAT_MAX_TOK,
                     system=system_prompt,
-                    messages=api_messages,
+                    messages=msgs,
                 )
                 if with_mcp:
                     kwargs["extra_headers"] = {"anthropic-beta": _CHAT_BETA}
                     kwargs["extra_body"] = {"mcp_servers": [{"type": "url", "url": mcp_url, "name": "kpi-monitor"}]}
                 return client.messages.stream(**kwargs)
+
+            def _stream_until_done(with_mcp: bool, status=None):
+                """Run the stream, continuing across pause_turn stops (long
+                multi-tool turns end with stop_reason='pause_turn' before the
+                final text is written). Returns the last final message."""
+                msgs = list(api_messages)
+                final = None
+                for _ in range(8):  # safety cap on continuations
+                    with _stream_call(with_mcp=with_mcp, msgs=msgs) as stream:
+                        _run_stream(stream, status=status)
+                    final = stream.get_final_message()
+                    if getattr(final, "stop_reason", None) == "pause_turn":
+                        msgs = msgs + [{"role": "assistant", "content": final.content}]
+                        if status is not None:
+                            status.update(label="Still working… (continuing)")
+                        continue
+                    break
+                return final
 
             def _run_stream(stream, status=None):
                 answer_started = False
@@ -2085,19 +2103,19 @@ def page_ask_claude(anomalies: list | None = None, domain_windows: dict | None =
                 client = _get_anthropic_client()
                 with spinner_slot.status("Thinking…", expanded=False) as status:
                     status.write("🔍 Reviewing the KPI snapshot")
-                    with _stream_call(with_mcp=_using_mcp) as stream:
-                        _run_stream(stream, status=status)
+                    final = _stream_until_done(with_mcp=_using_mcp, status=status)
                     status.update(
                         label=f"Done in {int(_time.time() - start)}s",
                         state="complete", expanded=False,
                     )
 
                 reply = "".join(reply_parts).strip()
-                if not reply:
-                    final = stream.get_final_message()
+                if not reply and final is not None:
                     reply = " ".join(
                         b.text for b in final.content if b.type == "text"
-                    ).strip() or "_No text returned._"
+                    ).strip()
+                if not reply:
+                    reply = "_No text returned._"
 
             except Exception as exc:
                 err_str = str(exc).lower()
@@ -2106,10 +2124,12 @@ def page_ask_claude(anomalies: list | None = None, domain_windows: dict | None =
                     reply_parts = []
                     try:
                         with spinner_slot.status("MCP unavailable — answering from context…", expanded=False) as status:
-                            with _stream_call(with_mcp=False) as stream:
-                                _run_stream(stream, status=status)
+                            final = _stream_until_done(with_mcp=False, status=status)
                             status.update(label="Answered from context", state="complete")
-                        reply = "".join(reply_parts).strip() or "_No text returned._"
+                        reply = "".join(reply_parts).strip()
+                        if not reply and final is not None:
+                            reply = " ".join(b.text for b in final.content if b.type == "text").strip()
+                        reply = reply or "_No text returned._"
                     except Exception as exc2:
                         reply = f"⚠ Error: `{exc2}`"
                 else:
