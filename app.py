@@ -1933,7 +1933,15 @@ def _get_secret(key: str, default: str = "") -> str:
 
 
 def _get_anthropic_client():
-    return _anthropic.Anthropic(api_key=_get_secret("ANTHROPIC_API_KEY"))
+    # Longer timeout + retries: the free-tier Render MCP can be slow on cold
+    # start, and multi-tool turns make several round trips, so transient resets
+    # are possible. max_retries covers the initial request; pause_turn loop and
+    # the connection-error fallback handle the rest.
+    return _anthropic.Anthropic(
+        api_key=_get_secret("ANTHROPIC_API_KEY"),
+        timeout=120.0,
+        max_retries=2,
+    )
 
 
 def _mcp_reachable(mcp_url: str) -> bool:
