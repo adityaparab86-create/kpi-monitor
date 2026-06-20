@@ -1827,11 +1827,10 @@ _CHAT_SYSTEM = (
     "You have access to live KPI data via tools. When the user asks about KPI performance, "
     "anomalies, or trends, always call the relevant tools to ground your answer in actual data. "
     "Keep responses concise and business-focused. Use INR crores for currency where relevant.\n\n"
-    "IMPORTANT: Use a maximum of 3 tool calls per response. "
-    "Retrieve the most relevant data first, then give your best answer immediately — "
-    "do not chain further tool calls to investigate correlations or chase root causes. "
-    "If you cannot fully explain the cause in 3 calls, state what the data shows and "
-    "note what additional investigation would be needed."
+    "Answer efficiently. A pre-loaded KPI snapshot is injected into every session — "
+    "use it to answer directly where possible. Only call tools when the snapshot is "
+    "insufficient: branch or RM-level breakdowns, historical ranges beyond the analysis "
+    "window, or cross-domain data not visible in the context."
 )
 
 
