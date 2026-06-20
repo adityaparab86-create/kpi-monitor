@@ -2057,24 +2057,40 @@ def page_ask_claude(anomalies: list | None = None, domain_windows: dict | None =
                     kwargs["extra_body"] = {"mcp_servers": [{"type": "url", "url": mcp_url, "name": "kpi-monitor"}]}
                 return client.messages.stream(**kwargs)
 
-            def _run_stream(stream):
+            def _run_stream(stream, status=None):
+                answer_started = False
                 for event in stream:
                     if event.type == "content_block_start":
                         block = getattr(event, "content_block", None)
-                        if block and getattr(block, "type", None) == "tool_use":
-                            tool_names.append(block.name)
+                        btype = getattr(block, "type", None) if block else None
+                        # MCP tools arrive as 'mcp_tool_use'; local tools as 'tool_use'
+                        if btype in ("tool_use", "mcp_tool_use"):
+                            tname = getattr(block, "name", "tool")
+                            tool_names.append(tname)
                             tools_slot.markdown(_pill_html(tool_names), unsafe_allow_html=True)
+                            if status is not None:
+                                status.update(label=f"Calling `{tname}`…")
+                                status.write(f"⚙ Querying KPI data via `{tname}`")
                     elif event.type == "content_block_delta":
                         delta = getattr(event, "delta", None)
                         if delta and getattr(delta, "type", None) == "text_delta":
+                            if not answer_started and status is not None:
+                                answer_started = True
+                                status.update(label="Writing answer…")
+                                status.write("✍️ Composing response")
                             reply_parts.append(delta.text)
                             text_slot.markdown("".join(reply_parts) + "▌")
 
             try:
                 client = _get_anthropic_client()
-                with spinner_slot.status("Thinking…", expanded=False):
+                with spinner_slot.status("Thinking…", expanded=False) as status:
+                    status.write("🔍 Reviewing the KPI snapshot")
                     with _stream_call(with_mcp=_using_mcp) as stream:
-                        _run_stream(stream)
+                        _run_stream(stream, status=status)
+                    status.update(
+                        label=f"Done in {int(_time.time() - start)}s",
+                        state="complete", expanded=False,
+                    )
 
                 reply = "".join(reply_parts).strip()
                 if not reply:
@@ -2089,9 +2105,10 @@ def page_ask_claude(anomalies: list | None = None, domain_windows: dict | None =
                     tool_names = []
                     reply_parts = []
                     try:
-                        with spinner_slot.status("MCP unavailable — answering from context…", expanded=False):
+                        with spinner_slot.status("MCP unavailable — answering from context…", expanded=False) as status:
                             with _stream_call(with_mcp=False) as stream:
-                                _run_stream(stream)
+                                _run_stream(stream, status=status)
+                            status.update(label="Answered from context", state="complete")
                         reply = "".join(reply_parts).strip() or "_No text returned._"
                     except Exception as exc2:
                         reply = f"⚠ Error: `{exc2}`"
