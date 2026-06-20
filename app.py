@@ -1661,79 +1661,79 @@ def _build_kpi_context(anomalies: list, domain: str) -> str:
                 f"(actual {a.actual_value:.1f}, expected {a.expected_value:.1f})"
             )
 
-        try:
-            loader = get_loader()
-            start_dt, end_dt = loader.last_n_days(7)
+    try:
+        loader = get_loader()
+        start_dt, end_dt = loader.last_n_days(7)
 
-            # Firm-level 7-day trend for top anomalous KPIs + their correlates
-            firm_kpis = list(dict.fromkeys(
-                a.kpi for a in filtered[:8]
-                if getattr(a, "dimension_level", "firm") in ("firm", "all", "")
-            ))
-            # Add correlates so causal questions (AUM vs redemptions) are answerable
-            correlate_kpis = []
-            for kpi in firm_kpis:
-                correlate_kpis.extend(loader.kpi_correlates(kpi))
-            all_firm_kpis = list(dict.fromkeys(firm_kpis + correlate_kpis))
+        # Firm-level 7-day trend: all domain KPIs + correlates of anomalous ones
+        domain_kpis = (
+            loader.domain_kpis(domain) if domain != "All"
+            else [a.kpi for a in filtered[:8] if getattr(a, "dimension_level", "firm") in ("firm", "all", "")]
+        )
+        correlate_kpis = []
+        for a in filtered[:8]:
+            if getattr(a, "dimension_level", "firm") in ("firm", "all", ""):
+                correlate_kpis.extend(loader.kpi_correlates(a.kpi))
+        all_firm_kpis = list(dict.fromkeys(domain_kpis + correlate_kpis))
 
-            if all_firm_kpis:
-                df = loader.firm_daily(date_range=(start_dt, end_dt))
-                available = [k for k in all_firm_kpis if k in df.columns]
-                if available:
-                    lines.append("\n### Last 7 days — daily values (firm-wide, incl. correlates):")
-                    lines.append("Date       | " + " | ".join(loader.kpi_display(k) for k in available))
-                    lines.append("-----------|" + "|".join("---------" for _ in available))
-                    for _, row in df.iterrows():
-                        vals = " | ".join(f"{row[k]:>9.1f}" for k in available)
-                        lines.append(f"{row['date'].date()} | {vals}")
+        if all_firm_kpis:
+            df = loader.firm_daily(date_range=(start_dt, end_dt))
+            available = [k for k in all_firm_kpis if k in df.columns]
+            if available:
+                lines.append("\n### Last 7 days — daily values (firm-wide, incl. correlates):")
+                lines.append("Date       | " + " | ".join(loader.kpi_display(k) for k in available))
+                lines.append("-----------|" + "|".join("---------" for _ in available))
+                for _, row in df.iterrows():
+                    vals = " | ".join(f"{row[k]:>9.1f}" for k in available)
+                    lines.append(f"{row['date'].date()} | {vals}")
 
-            # Market returns — always include for "is it market-driven?" questions
-            mkt = loader.market
-            if not mkt.empty:
-                mkt_recent = mkt[
-                    (mkt["date"] >= pd.Timestamp(start_dt)) &
-                    (mkt["date"] <= pd.Timestamp(end_dt))
-                ].copy()
-                if not mkt_recent.empty:
-                    lines.append("\n### Nifty daily returns (last 7 days):")
-                    for _, row in mkt_recent.iterrows():
-                        lines.append(f"- {row['date'].date()}: {row['nifty_return']:+.2f}%")
+        # Market returns — always include for "is it market-driven?" questions
+        mkt = loader.market
+        if not mkt.empty:
+            mkt_recent = mkt[
+                (mkt["date"] >= pd.Timestamp(start_dt)) &
+                (mkt["date"] <= pd.Timestamp(end_dt))
+            ].copy()
+            if not mkt_recent.empty:
+                lines.append("\n### Nifty daily returns (last 7 days):")
+                for _, row in mkt_recent.iterrows():
+                    lines.append(f"- {row['date'].date()}: {row['nifty_return']:+.2f}%")
 
-            # Regional breakdown for top regional anomalies
-            regional = [
-                a for a in filtered[:10]
-                if getattr(a, "dimension_level", "firm") not in ("firm", "all", "")
-            ]
-            seen_regions: set = set()
-            for a in regional[:4]:  # cap at 4 regions to avoid token bloat
-                region_key = f"{a.kpi}|{a.dimension_level}|{a.dimension_label()}"
-                if region_key in seen_regions:
-                    continue
-                seen_regions.add(region_key)
-                try:
-                    region_kpis = list(dict.fromkeys([a.kpi] + loader.kpi_correlates(a.kpi)))
-                    filters = {a.dimension_level: a.dimension_label()}
-                    df_r = loader.aggregate(
-                        group_by=[a.dimension_level],
-                        date_range=(start_dt, end_dt),
-                        filters=filters,
+        # Regional breakdown for top regional anomalies
+        regional = [
+            a for a in filtered[:10]
+            if getattr(a, "dimension_level", "firm") not in ("firm", "all", "")
+        ]
+        seen_regions: set = set()
+        for a in regional[:4]:  # cap at 4 regions to avoid token bloat
+            region_key = f"{a.kpi}|{a.dimension_level}|{a.dimension_label()}"
+            if region_key in seen_regions:
+                continue
+            seen_regions.add(region_key)
+            try:
+                region_kpis = list(dict.fromkeys([a.kpi] + loader.kpi_correlates(a.kpi)))
+                filters = {a.dimension_level: a.dimension_label()}
+                df_r = loader.aggregate(
+                    group_by=[a.dimension_level],
+                    date_range=(start_dt, end_dt),
+                    filters=filters,
+                )
+                available_r = [k for k in region_kpis if k in df_r.columns]
+                if available_r:
+                    lines.append(
+                        f"\n### Last 7 days — {a.dimension_label()} "
+                        f"({a.dimension_level}, incl. correlates):"
                     )
-                    available_r = [k for k in region_kpis if k in df_r.columns]
-                    if available_r:
-                        lines.append(
-                            f"\n### Last 7 days — {a.dimension_label()} "
-                            f"({a.dimension_level}, incl. correlates):"
-                        )
-                        lines.append("Date       | " + " | ".join(loader.kpi_display(k) for k in available_r))
-                        lines.append("-----------|" + "|".join("---------" for _ in available_r))
-                        for _, row in df_r.iterrows():
-                            vals = " | ".join(f"{row[k]:>9.1f}" for k in available_r)
-                            lines.append(f"{row['date'].date()} | {vals}")
-                except Exception:
-                    pass
+                    lines.append("Date       | " + " | ".join(loader.kpi_display(k) for k in available_r))
+                    lines.append("-----------|" + "|".join("---------" for _ in available_r))
+                    for _, row in df_r.iterrows():
+                        vals = " | ".join(f"{row[k]:>9.1f}" for k in available_r)
+                        lines.append(f"{row['date'].date()} | {vals}")
+            except Exception:
+                pass
 
-        except Exception:
-            pass  # enrichment is best-effort; anomaly list still useful
+    except Exception:
+        pass  # enrichment is best-effort; anomaly list still useful
 
     lines.append(
         "\nAnswer using this data directly. Only call tools if the user asks for "
